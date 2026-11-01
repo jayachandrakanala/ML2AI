@@ -13,4 +13,12 @@ Here are some ideas to get you started:
 - 📫 How to reach me: ...
 - 😄 Pronouns: ...
 - ⚡ Fun fact: ...
+
+- source ~/.bashrc
+- conda activate ./venv
+- or source venv/bin/activate
+- pip install -r requirements.txt
+- StudioUI->Advanced Settings-> Enter BaseURL = https://orange-disco-94q45677vwxf7x56-2024.app.github.dev
+- and Enter Allowed Domains: *
+- Open in another browser https://orange-disco-94q45677vwxf7x56-2024.app.github.dev/docs
 -->

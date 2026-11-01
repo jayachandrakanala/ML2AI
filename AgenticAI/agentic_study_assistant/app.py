@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import time
 
+from langgraph.types import Command
+
 from styles.custom_css import apply_custom_theme
 from utils.document_parser import parse_uploaded_file
 from graph.workflow import create_study_assistant_graph
@@ -13,6 +15,10 @@ from langchain_openai import ChatOpenAI
 st.set_page_config(page_title="LangGraph: Stateful Agentic AI", page_icon="🤖", layout="wide")
 
 # --- INITIALIZE PERSISTENT SESSION STATES ---
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = "study_session_1"
+if "app_graph" not in st.session_state:
+    st.session_state.app_graph = None
 if "summary" not in st.session_state:
     st.session_state.summary = None
 if "quiz_questions" not in st.session_state:
@@ -85,9 +91,16 @@ def get_llm():
             max_retries=5
         )
 
+# Get persistent compiled graph instance with memory saver
+def get_graph_app():
+    llm = get_llm()
+    if st.session_state.app_graph is None:
+        st.session_state.app_graph = create_study_assistant_graph(llm)
+    return st.session_state.app_graph
+
 # --- MAIN HEADER ---
 st.markdown("<h1 class='main-title'>🤖 Multi-Agent Study Assistant</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-title'>⚡ Powered by LangGraph Stateful • Streamlit UI Architecture</p>", unsafe_allow_html=True)
+st.markdown("<p class='sub-title'>⚡ Powered by LangGraph Native interrupt() & Command() Architecture</p>", unsafe_allow_html=True)
 
 st.divider()
 
@@ -114,10 +127,10 @@ c1, c2, c3 = st.columns(3)
 def render_status_card(agent_title, status_str):
     color = "#a0a0b0"
     border = "#2d1b4e"
-    if any(k in status_str for k in ["Processing", "Generating", "Validating"]):
+    if any(k in status_str for k in ["Processing", "Generating", "Validating", "Reviewing"]):
         color = "#ff007f"
         border = "#ff007f"
-    elif any(k in status_str for k in ["Completed", "Validated", "Submitted"]):
+    elif any(k in status_str for k in ["Completed", "Validated", "Submitted", "Paused"]):
         color = "#00ff66"
         border = "#00f0ff"
         
@@ -148,32 +161,34 @@ if st.session_state.activity_logs:
     terminal_log_placeholder.code(terminal_text, language="bash")
 
 
-# --- HELPER FUNCTIONS FOR INTERACTIVE RENDERING ---
-def run_reviewer_evaluation(user_answers):
-    llm = get_llm()
-    from agents.reviewer import reviewer_agent
+# --- RESUME GRAPH FUNCTION VIA NATIVE Command(resume=...) ---
+def resume_graph_with_command(user_answers):
+    app_graph = get_graph_app()
+    config = {"configurable": {"thread_id": st.session_state.thread_id}}
     
-    eval_state = {
-        "document_text": "",
-        "summary": st.session_state.summary,
-        "quiz_questions": st.session_state.quiz_questions,
-        "user_answers": user_answers,
-        "activity_logs": st.session_state.activity_logs,
-        "corrections_made": st.session_state.corrections_made
-    }
+    st.session_state.agent_state_reviewer = "🔄 Reviewing Student Answers..."
+    st.session_state.execution_progress = 85
+    st.session_state.progress_text = "Resuming graph thread via Command(resume=...)..."
     
     try:
-        result = reviewer_agent(eval_state, llm)
-        st.session_state.evaluation_report = result["reviewer_feedback"]
-        st.session_state.activity_logs = result["activity_logs"]
-        st.session_state.quiz_submitted = True
-        st.session_state.agent_state_reviewer = "✅ Validated & Evaluated"
-        st.session_state.execution_progress = 100
-        st.session_state.progress_text = "Reviewer Agent completed answer evaluation."
+        # Resume graph execution passing string-keyed answers to interrupt point
+        for output in app_graph.stream(Command(resume=user_answers), config=config):
+            for node_name, node_state in output.items():
+                if "activity_logs" in node_state:
+                    st.session_state.activity_logs = node_state["activity_logs"]
+                if node_name == "reviewer":
+                    st.session_state.evaluation_report = node_state.get("reviewer_feedback")
+                    st.session_state.agent_state_reviewer = "✅ Validated & Evaluated"
+                    st.session_state.execution_progress = 100
+                    st.session_state.progress_text = "Workflow completed via native Command() resume!"
+                    st.session_state.quiz_submitted = True
+
+        st.rerun()
     except Exception as ex:
-        st.error(f"Evaluation Error: {str(ex)}")
+        st.error(f"Error Resuming Graph: {str(ex)}")
 
 
+# --- HELPER FUNCTION TO RENDER QUIZ UI ---
 def render_quiz_form_ui(target_container):
     with target_container.container():
         if st.session_state.quiz_questions and len(st.session_state.quiz_questions) > 0:
@@ -197,15 +212,18 @@ def render_quiz_form_ui(target_container):
                         options_list = [f"{k}: {v}" for k, v in opts.items()] if isinstance(opts, dict) else ["A: Option A", "B: Option B", "C: Option C", "D: Option D"]
                         
                         choice = st.radio(f"Select answer for Q{idx}:", options_list, key=f"q_{idx}")
-                        user_selected_answers[idx] = choice.split(":")[0]
+                        
+                        # CRITICAL FIX: Cast dictionary keys to string ("1", "2") and option letter ("A", "B")
+                        str_key = str(idx)
+                        selected_option = str(choice.split(":")[0]).strip()
+                        user_selected_answers[str_key] = selected_option
                         st.divider()
                     
-                    submit_quiz = st.form_submit_button("📩 Submit Answers for Reviewer Evaluation")
+                    submit_quiz = st.form_submit_button("📩 Submit Answers (Resumes LangGraph Thread)")
                 
                 if submit_quiz or remaining == 0:
-                    with st.spinner("Reviewer Agent evaluating your answers..."):
-                        run_reviewer_evaluation(user_selected_answers)
-                        st.rerun()
+                    with st.spinner("Passing Command(resume=...) to Reviewer Agent..."):
+                        resume_graph_with_command(user_selected_answers)
             else:
                 st.success("✅ Assessment Submitted! Check the **'Reviewer Corrections'** tab for your personalized score and feedback.")
         else:
@@ -240,7 +258,7 @@ with tab3:
     if st.session_state.evaluation_report:
         tab3_placeholder.markdown(st.session_state.evaluation_report)
     elif st.session_state.quiz_questions and not st.session_state.quiz_submitted:
-        tab3_placeholder.info("⏳ Complete and submit the Quiz in Tab 2 to view Reviewer corrections and marks.")
+        tab3_placeholder.info("⏳ Complete and submit the Quiz in Tab 2 to resume the Reviewer Agent thread.")
     else:
         tab3_placeholder.info("⏳ Reviewer feedback will appear here after quiz submission.")
 
@@ -259,6 +277,12 @@ if start_execution:
     if not uploaded_file:
         st.error("Please upload a document first.")
     else:
+        # Generate fresh thread_id & reset app graph for new execution
+        st.session_state.thread_id = f"study_session_{int(time.time())}"
+        st.session_state.app_graph = None
+        
+        config = {"configurable": {"thread_id": st.session_state.thread_id}}
+
         # Reset Session State
         st.session_state.summary = None
         st.session_state.quiz_questions = None
@@ -278,9 +302,8 @@ if start_execution:
         summarizer_status_placeholder.markdown(render_status_card("Agent 1: Summarize Agent", st.session_state.agent_state_summary), unsafe_allow_html=True)
 
         doc_text = parse_uploaded_file(uploaded_file)
-        llm = get_llm()
         
-        app_graph = create_study_assistant_graph(llm)
+        app_graph = get_graph_app()
         
         initial_state = {
             "document_text": doc_text,
@@ -295,7 +318,8 @@ if start_execution:
         }
 
         try:
-            for output in app_graph.stream(initial_state):
+            # Stream execution until interrupt() halts the thread at human_quiz
+            for output in app_graph.stream(initial_state, config=config):
                 for node_name, node_state in output.items():
                     if "activity_logs" in node_state:
                         st.session_state.activity_logs = node_state["activity_logs"]
@@ -307,30 +331,23 @@ if start_execution:
                         st.session_state.agent_state_quiz = "🔄 Generating 5 MCQs..."
                         st.session_state.execution_progress = 40
                         st.session_state.progress_text = "Summarize Agent completed. Tab 1 Populated!"
-                        
-                        # RENDER TAB 1 IMMEDIATELY
                         tab1_placeholder.markdown(summary_res)
-                        time.sleep(2.5) # Prevent Groq Rate Limit (HTTP 429)
+                        time.sleep(2.5)
 
                     elif node_name == "quiz_generator":
                         questions = node_state.get("quiz_questions", [])
                         st.session_state.quiz_questions = questions
                         st.session_state.quiz_start_time = time.time()
                         st.session_state.agent_state_quiz = "✅ Completed"
-                        st.session_state.agent_state_reviewer = "⏳ Awaiting Student Submission"
+                        st.session_state.agent_state_reviewer = "⏸️ Paused via interrupt()"
                         st.session_state.execution_progress = 70
-                        st.session_state.progress_text = "Quiz Agent completed. 5 MCQs Ready in Tab 2!"
-                        
-                        # RENDER TAB 2 IMMEDIATELY
+                        st.session_state.progress_text = "Graph thread paused via interrupt(). 5 MCQs Ready in Tab 2!"
                         render_quiz_form_ui(tab2_placeholder)
                         time.sleep(2.5)
 
-                    elif node_name == "reviewer":
-                        st.session_state.execution_progress = 100
-                        st.session_state.agent_state_reviewer = "✅ Validated Quiz"
-                        st.session_state.progress_text = "Workflow execution completed."
+                    elif node_name == "human_quiz":
+                        st.session_state.agent_state_reviewer = "⏸️ Thread Paused (Awaiting Submission)"
 
-                    # Render terminal log and status cards live
                     terminal_text = "".join([f"⚡ [{entry['agent']}]: {entry['action']}\n" for entry in st.session_state.activity_logs])
                     terminal_log_placeholder.code(terminal_text, language="bash")
 
