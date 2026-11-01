@@ -1,0 +1,68 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode and tooling
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python package/build output
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Application databases and runtime state
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+checkpoints.sqlite*
+metrics.sqlite*
+chroma_db/
+data/
+.langgraph_api/
+
+# Logs, reports, and generated artifacts
+*.log
+logs/
+reports/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Editor and temporary backups
+*.bak
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit local state
+.streamlit/secrets.toml

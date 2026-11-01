@@ -1,0 +1,9 @@
+[logger]
+level = "error"
+hideWelcomeMessage = true
+
+[server]
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
