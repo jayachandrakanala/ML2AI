@@ -142,10 +142,13 @@
   - [Key Differences](#key-differences)
   - [Metrics Compared](#metrics-compared)
   - [Decision Matrix](#decision-matrix-1)
----
+
 ---
 
 ---
+
+---
+
 ## 📌 Project Overview
 
 **Laddu Bullodu** is a multi-agent AI assistant built around LangGraph workflows and a Streamlit chat interface. It combines locally stored documents, hybrid retrieval, cross-encoder re-ranking, live web search, Neo4j supply-chain analysis, commercial real-estate research, and direct LLM reasoning.
@@ -168,21 +171,21 @@ The application supports per-browser chat threads persisted in SQLite and stream
 
 ## 🛠️ Technology Stack
 
-| Area | Technology used by the current codebase |
-| --- | --- |
-| UI | Streamlit |
-| Agent framework | LangGraph, LangChain |
-| Chat models | Ollama, Groq via `langchain-groq` |
-| Local embeddings | Ollama `embeddinggemma`, or local Hugging Face EmbeddingGemma embeddings |
-| Vector database | ChromaDB |
-| Lexical retrieval | `rank_bm25` |
-| Re-ranking | Sentence Transformers / BAAI BGE cross-encoder |
-| Web search | Google Serper API via LangChain |
-| Graph database | Neo4j and Neo4j Graph Data Science |
-| Privacy | Microsoft Presidio plus custom regex-backed sanitization |
-| Checkpointing | LangGraph SQLite saver |
-| Metrics | SQLite |
-| Tracing | OpenInference LangChain instrumentation, OpenTelemetry, Phoenix |
+| Area              | Technology used by the current codebase                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| UI                | Streamlit                                                                |
+| Agent framework   | LangGraph, LangChain                                                     |
+| Chat models       | Ollama, Groq, and OpenAI via their LangChain integrations                |
+| Local embeddings  | Ollama `embeddinggemma`, or local Hugging Face EmbeddingGemma embeddings |
+| Vector database   | ChromaDB                                                                 |
+| Lexical retrieval | `rank_bm25`                                                              |
+| Re-ranking        | Sentence Transformers / BAAI BGE cross-encoder                           |
+| Web search        | Google Serper API via LangChain                                          |
+| Graph database    | Neo4j and Neo4j Graph Data Science                                       |
+| Privacy           | Microsoft Presidio plus custom regex-backed sanitization                 |
+| Checkpointing     | LangGraph SQLite saver                                                   |
+| Metrics           | SQLite                                                                   |
+| Tracing           | OpenInference LangChain instrumentation, OpenTelemetry, Phoenix          |
 
 ## Architecture and Data Flow
 
@@ -316,7 +319,7 @@ test/                          Routing, retrieval, evaluation, and supply-chain 
 - Bridge LangGraph status updates to Streamlit without circular imports.
 - Record execution latency, estimated cost, intent, citation mode, status, and summary statistics.
 
-## Setup
+## Setup Project
 
 ### Prerequisites
 
@@ -330,8 +333,8 @@ test/                          Routing, retrieval, evaluation, and supply-chain 
 ### 1. Clone and create a virtual environment
 
 ```bash
-git clone https://github.com/tanukanala/laddu-bullodu-chat.git
-cd laddu-bullodu-chat
+git clone https://github.com/jayachandrakanala/ML2AI.git
+cd AgenticAI/ML2AI/laddu-bullodu-chat
 python -m venv venv
 ```
 
@@ -378,6 +381,9 @@ Create `.env` in the project root:
 # Required for Groq model selection
 GROQ_API_KEY=your_groq_api_key
 
+# Required for OpenAI model selection
+OPENAI_API_KEY=your_openai_api_key
+
 # Required for live web and site-selection workflows
 SERPER_API_KEY=your_serper_api_key
 
@@ -405,7 +411,7 @@ streamlit run app.py
 
 Open `http://localhost:8501`.
 
-The Groq option and Ollama option are both available in the chat-model selector. Ollama can provide local chat and embeddings; Groq requires `GROQ_API_KEY`. RAG chooses local Hugging Face embedding resources when Groq is selected and Ollama embeddings when Ollama is selected.
+Ollama, Groq, and OpenAI are available in the chat-model selector. Ollama can provide local chat and embeddings; Groq requires `GROQ_API_KEY`; OpenAI requires `OPENAI_API_KEY`. RAG chooses local Hugging Face embedding resources when Groq is selected and Ollama embeddings for Ollama and OpenAI selections.
 
 ## Neo4j Setup
 
@@ -1191,6 +1197,7 @@ In a production LangGraph setup, OpenTelemetry operates as a non-intrusive backg
 3. **Deprecate manual calculation blocks** in `output_guardrail_node` once your OTel dashboard collector is active.
 
 #### How to Validate Your New Observability Stack
+
 Launch the App: Run your Streamlit application:
 
 Bash

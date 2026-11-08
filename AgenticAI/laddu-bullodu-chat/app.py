@@ -65,7 +65,7 @@ with st.sidebar:
         index=list(MODEL_LABELS).index(GROQ_MODEL),
         key="selected_model",
     )
-    st.caption("Groq requires GROQ_API_KEY in your .env file.")
+    st.caption("Groq and OpenAI require their API keys in your .env file.")
 
 # ------------------------------------------------------------------------------
 # 1. Thread Persistence & Session Setup
