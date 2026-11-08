@@ -35,11 +35,11 @@ Unlike traditional social networks that depend heavily on a fixed social graph, 
 
 ### Core components
 
-| Component | Purpose |
-|---|---|
+| Component                 | Purpose                                                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | High-speed video pipeline | Transcodes uploaded media, extracts features, creates content embeddings, and caches assets close to users. |
-| Streaming data engine | Collects interaction events and updates user or model state with low latency. |
-| Recommendation engine | Retrieves a small candidate set and applies multi-objective ranking before returning the feed. |
+| Streaming data engine     | Collects interaction events and updates user or model state with low latency.                               |
+| Recommendation engine     | Retrieves a small candidate set and applies multi-objective ranking before returning the feed.              |
 
 ### Two-stage recommendation flow
 
@@ -95,12 +95,12 @@ Personalized next feed
 
 ### Event-flow stages
 
-| Stage | Responsibility |
-|---|---|
-| Collection | Edge agents collect, structure, and forward interaction logs. |
-| Transport | Kafka distributes high-volume events between producers and consumers while absorbing spikes. |
-| Stream processing | Flink joins interaction events with content context and continuously computes state updates. |
-| Serving | The recommendation system reads updated state when producing the next request's candidates and ranking results. |
+| Stage             | Responsibility                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| Collection        | Edge agents collect, structure, and forward interaction logs.                                                   |
+| Transport         | Kafka distributes high-volume events between producers and consumers while absorbing spikes.                    |
+| Stream processing | Flink joins interaction events with content context and continuously computes state updates.                    |
+| Serving           | The recommendation system reads updated state when producing the next request's candidates and ranking results. |
 
 ### Commonly collected signals
 
@@ -146,11 +146,11 @@ Continue until an empty slot is found
 
 ### Memory optimization techniques
 
-| Technique | Purpose |
-|---|---|
-| Count-Min Sketch | Estimates item frequency and helps identify cold or low-value entries. |
-| Time-to-live | Automatically expires stale preference fields. |
-| Sharding | Splits the parameter space across independent server processes or machines. |
+| Technique                | Purpose                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| Count-Min Sketch         | Estimates item frequency and helps identify cold or low-value entries.              |
+| Time-to-live             | Automatically expires stale preference fields.                                      |
+| Sharding                 | Splits the parameter space across independent server processes or machines.         |
 | Sparse embedding storage | Stores parameters for observed IDs instead of maintaining dense parameter matrices. |
 
 ---
@@ -215,6 +215,10 @@ This separation keeps expensive model execution off the retrieval request path.
 
 Candidate retrieval uses approximate nearest-neighbor search rather than exact comparison against every video.
 
+To understand how FAISS (Facebook AI Similarity Search) and ScaNN (Scalable Nearest Neighbors by Google) work, it helps to look at the exact computational problem they solve.
+
+![alt text](image.png)
+
 ### FAISS inverted-file indexing
 
 FAISS can cluster vectors and build an inverted-file index:
@@ -263,12 +267,12 @@ This converts high-cost floating-point comparisons into compact storage and tabl
 
 ### Comparison
 
-| Method | Best-known role | Main trade-off |
-|---|---|---|
-| Exact search | Highest possible recall | Too expensive at global scale. |
-| FAISS IVF | Fast coarse cluster filtering | Candidate recall depends on how many clusters are searched. |
-| ScaNN | Accurate approximate retrieval | Requires more complex index configuration and training. |
-| Product Quantization | Memory-efficient compressed vectors | Approximation can reduce retrieval precision. |
+| Method               | Best-known role                     | Main trade-off                                              |
+| -------------------- | ----------------------------------- | ----------------------------------------------------------- |
+| Exact search         | Highest possible recall             | Too expensive at global scale.                              |
+| FAISS IVF            | Fast coarse cluster filtering       | Candidate recall depends on how many clusters are searched. |
+| ScaNN                | Accurate approximate retrieval      | Requires more complex index configuration and training.     |
+| Product Quantization | Memory-efficient compressed vectors | Approximation can reduce retrieval precision.               |
 
 ---
 
@@ -297,12 +301,12 @@ Fine ranking evaluates a few hundred candidates and models interactions between 
 
 ### MMoE components
 
-| Component | Purpose |
-|---|---|
-| Experts | Specialized neural sub-networks learn patterns from candidate and user features. |
-| Task-specific gates | Softmax gates choose how much each task should use each expert. |
-| Task towers | Convert expert representations into predictions for each objective. |
-| Blending function | Converts task predictions into one final score and feed order. |
+| Component           | Purpose                                                                          |
+| ------------------- | -------------------------------------------------------------------------------- |
+| Experts             | Specialized neural sub-networks learn patterns from candidate and user features. |
+| Task-specific gates | Softmax gates choose how much each task should use each expert.                  |
+| Task towers         | Convert expert representations into predictions for each objective.              |
+| Blending function   | Converts task predictions into one final score and feed order.                   |
 
 ### Example blended score
 
@@ -324,11 +328,11 @@ Weights are adjusted to support platform goals such as:
 
 A user profile is not a single static embedding. It commonly combines stable identity, long-term interests, and short-term intent.
 
-| Layer | Typical time scale | Purpose |
-|---|---|---|
-| Static profile | Months to years | Language, device, demographics, and account attributes. |
-| Long-term preferences | Weeks to months | Stable topics and recurring interests. |
-| Real-time intent | Seconds to minutes | Recent viewing sequence and immediate context. |
+| Layer                 | Typical time scale | Purpose                                                 |
+| --------------------- | ------------------ | ------------------------------------------------------- |
+| Static profile        | Months to years    | Language, device, demographics, and account attributes. |
+| Long-term preferences | Weeks to months    | Stable topics and recurring interests.                  |
+| Real-time intent      | Seconds to minutes | Recent viewing sequence and immediate context.          |
 
 ### Real-time update flow
 
@@ -425,4 +429,4 @@ User action -> behavior logs -> stream processing -> profile state
 
 ---
 
-*This document describes a general large-scale recommendation architecture. TikTok's proprietary implementation details may differ.*
+_This document describes a general large-scale recommendation architecture. TikTok's proprietary implementation details may differ._
