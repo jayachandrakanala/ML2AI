@@ -29,7 +29,7 @@ load_dotenv()
 from src.telemetry import init_telemetry
 init_telemetry()
 
-from src.agent_graph import app_graph, set_status_callback, get_latest_thread_state, stream_graph, invoke_graph
+from src.agent_graph import set_status_callback
 from src.llm_provider import GROQ_MODEL, MODEL_LABELS, OLLAMA_MODEL
 
 st.set_page_config(
@@ -40,6 +40,37 @@ st.set_page_config(
 
 st.header("✨ Laddu🟠Bullodu👦RAG Multi-Agent Chat ✨")
 st.markdown("Powered by Python, Streamlit, LangGraph, ChromaDB, EmbeddingGemma, Serper.dev, & OpenTelemetry")
+
+with st.sidebar:
+    st.subheader("Workflow")
+    workflow_mode = st.radio(
+        "Choose a workflow",
+        options=("Default agentic AI flow", "Autonomous multi-agent"),
+        index=0,
+        key="workflow_mode",
+        help=(
+            "The default keeps the existing intent-routed graph. Autonomous mode "
+            "lets a tool-calling supervisor delegate to specialist workflows and "
+            "uses a critic with a bounded retry loop."
+        ),
+    )
+
+if workflow_mode == "Autonomous multi-agent":
+    from src.autonomous_graph import (
+        get_latest_autonomous_thread_state as get_latest_thread_state,
+        invoke_autonomous_graph as invoke_graph,
+        stream_autonomous_graph as stream_graph,
+    )
+
+    workflow_thread_suffix = "-autonomous"
+else:
+    from src.agent_graph import (
+        get_latest_thread_state,
+        invoke_graph,
+        stream_graph,
+    )
+
+    workflow_thread_suffix = ""
 
 with st.sidebar:
     st.markdown("---")
@@ -65,7 +96,10 @@ with st.sidebar:
         index=list(MODEL_LABELS).index(GROQ_MODEL),
         key="selected_model",
     )
-    st.caption("Groq and OpenAI require their API keys in your .env file.")
+    st.caption(
+        "Cloud models require their provider key in .env. Gemini and OpenRouter "
+        "offer free-tier options with provider limits."
+    )
 
 # ------------------------------------------------------------------------------
 # 1. Thread Persistence & Session Setup
@@ -76,7 +110,7 @@ if "thread_id" not in st.session_state:
 
 thread_config = {
     "configurable": {
-        "thread_id": st.session_state.thread_id
+        "thread_id": f"{st.session_state.thread_id}{workflow_thread_suffix}"
     }
 }
 
@@ -92,10 +126,10 @@ for message in st.session_state.messages:
 # ------------------------------------------------------------------------------
 # 2. Checkpoint Auto-Resumption Logic on Startup
 # ------------------------------------------------------------------------------
-current_checkpoint = get_latest_thread_state(st.session_state.thread_id)
+current_checkpoint = get_latest_thread_state(thread_config["configurable"]["thread_id"])
 
 if current_checkpoint and current_checkpoint.next:
-    st.info("⚡ Detected interrupted workflow execution. Automatically resuming from last saved SQLite checkpoint...")
+    st.info("⚡ Detected interrupted workflow execution. Automatically resuming from the selected workflow's SQLite checkpoint...")
     
     ai_response = ""
     with st.chat_message("assistant"):
@@ -142,7 +176,11 @@ if prompt := st.chat_input("Ask a question or request a site selection report...
 
     ai_response = ""
     with st.chat_message("assistant"):
-        with st.status("Initializing agentic workflow...", expanded=True) as status:
+        with st.status(
+            "Initializing autonomous multi-agent workflow..." if workflow_mode == "Autonomous multi-agent"
+            else "Initializing agentic workflow...",
+            expanded=True,
+        ) as status:
             def update_status(msg: str):
                 """Render graph-node progress in the active Streamlit status panel."""
                 status.update(label=msg)
@@ -155,15 +193,22 @@ if prompt := st.chat_input("Ask a question or request a site selection report...
                     "messages": graph_messages,
                     "selected_model": selected_model or OLLAMA_MODEL,
                 }
+                if workflow_mode == "Autonomous multi-agent":
+                    state_input["thread_id"] = thread_config["configurable"]["thread_id"]
                 
                 node_descriptions = {
+                    "initialize": "Preparing the goal and autonomous run state...",
+                    "supervisor": "Supervisor choosing a specialist or deciding to finish...",
+                    "worker": "Executing the supervisor-selected specialist...",
+                    "critic": "Critic reviewing evidence and identifying gaps...",
+                    "finalize": "Synthesizing findings into a final answer...",
+                    "guardrail": "Validating output against PII guardrails and recording metrics...",
                     "router_agent": "Analyzing user intent and selecting execution path...",
                     "retrieve_node": "Executing Hybrid Retrieval (Dense Vector + BM25) (k=20)...",
                     "rerank_node": "Scoring and filtering documents using BAAI BGE Cross-Encoder...",
                     "crag_fallback_node": "Corrective RAG triggered: executing web search...",
                     "domain_executor_node": "Executing specialized domain intelligence (Neo4j / Site Selection / Web)...",
                     "rag_generate_node": "Synthesizing final response...",
-                    "guardrail": "Validating output against PII and security guardrails..."
                 }
 
                 for event in stream_graph(state_input, config=thread_config, stream_mode="updates"):

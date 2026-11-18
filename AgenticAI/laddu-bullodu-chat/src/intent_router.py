@@ -89,6 +89,18 @@ def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tup
     if "canada" in query_lower or "canadian" in query_lower:
         default_country = "Canada"
         default_locations = ["Montreal QC", "Toronto ON", "Calgary AB"]
+    elif any(w in query_lower for w in ["west indies", "caribbean", "caribbean islands"]):
+        default_country = "Caribbean (West Indies)"
+        default_locations = [
+            "San Juan Puerto Rico",
+            "Santo Domingo Dominican Republic",
+            "Port of Spain Trinidad and Tobago",
+        ]
+        log_status(
+            "Using regional site-selection hubs for the West Indies/Caribbean: "
+            + ", ".join(default_locations)
+        )
+        return default_country, default_locations
     elif any(w in query_lower for w in ["asia", "asian", "singapore", "japan", "tokyo", "india", "mumbai", "seoul", "hong kong", "apac"]):
         default_country = "Asia-Pacific"
         default_locations = ["Singapore", "Tokyo Japan", "Mumbai India"]

@@ -14,12 +14,16 @@
   - [🚀 Technical Highlights](#-technical-highlights)
   - [🛠️ Technology Stack](#️-technology-stack)
   - [Architecture and Data Flow](#architecture-and-data-flow)
+    - [Default Agentic AI Flow](#default-agentic-ai-flow)
+    - [Autonomous Agentic Loop](#autonomous-agentic-loop)
+    - [Data Flow and Persistence](#data-flow-and-persistence)
   - [Key Features](#key-features)
     - [🏢 Multi-Agent Site Selection](#-multi-agent-site-selection)
     - [🎯 Intent Routing](#-intent-routing)
     - [🔎 Hybrid Retrieval and Corrective RAG](#-hybrid-retrieval-and-corrective-rag)
     - [🛡️ Guardrails and Privacy](#️-guardrails-and-privacy)
     - [📦 Supply-Chain Graph Intelligence](#-supply-chain-graph-intelligence)
+  - [Autonomous Multi-Agent Mode](#autonomous-multi-agent-mode)
   - [Project Structure](#project-structure)
   - [Module Responsibilities](#module-responsibilities)
     - [`app.py`](#apppy)
@@ -164,12 +168,13 @@ The application supports per-browser chat threads persisted in SQLite and stream
 ## 🚀 Technical Highlights
 
 - **Intent-driven LangGraph workflow:** routes requests among `RAG`, `WEB`, `SUPPLY_CHAIN`, `SITE_SELECTION`, and `LLM`.
+- **Selectable autonomous mode:** optionally use a tool-calling supervisor to delegate work to specialist workflows, with critic feedback and a bounded retry loop; the existing flow remains the default.
 - **Hybrid local retrieval:** combines dense vector search with BM25 lexical search and Reciprocal Rank Fusion.
 - **Cross-encoder re-ranking:** scores fused candidates with BAAI `bge-reranker-large` and keeps the strongest context.
 - **Corrective RAG fallback:** web search is used when the top re-ranking relevance score is below the configured CRAG threshold.
 - **Neo4j supply-chain intelligence:** generates and executes Cypher, with optional Neo4j GDS weighted routing analysis.
 - **Multi-agent site selection:** gathers market evidence, evaluates candidates, and writes Markdown investment reports under `reports/`.
-- **Model selection:** switch between local Ollama `llama3.2` and the Groq Qwen model configured in the UI.
+- **Model selection:** switch among local Ollama, Groq Qwen/GPT-OSS, OpenAI, Google Gemini, and OpenRouter's free-model router.
 - **Persistent state:** LangGraph checkpoints browser conversations in `checkpoints.sqlite`.
 - **Observability:** local metrics are stored in SQLite, and application traces can be exported to Phoenix/OpenTelemetry.
 
@@ -179,7 +184,7 @@ The application supports per-browser chat threads persisted in SQLite and stream
 | ----------------- | ------------------------------------------------------------------------ |
 | UI                | Streamlit                                                                |
 | Agent framework   | LangGraph, LangChain                                                     |
-| Chat models       | Ollama, Groq, and OpenAI via their LangChain integrations                |
+| Chat models       | Ollama, Groq, OpenAI-compatible APIs, and Google Gemini via LangChain     |
 | Local embeddings  | Ollama `embeddinggemma`, or local Hugging Face EmbeddingGemma embeddings |
 | Vector database   | ChromaDB                                                                 |
 | Lexical retrieval | `rank_bm25`                                                              |
@@ -193,26 +198,119 @@ The application supports per-browser chat threads persisted in SQLite and stream
 
 ## Architecture and Data Flow
 
+The Streamlit interface lets each browser session select a chat model and one of two workflows. **Default agentic AI flow** is selected by default and preserves the intent-routed graph. **Autonomous multi-agent** uses a separate supervisor/worker/critic graph. Both workflows reuse existing specialist implementations and finish through the output guardrail.
+
+### Default Agentic AI Flow
+
+The default graph routes requests using the classified intent. RAG has a retrieval-quality branch; the other intents go through the domain executor, which invokes the appropriate domain workflow.
+
 ```text
-Streamlit chat UI
-       │
-       ▼
-LangGraph router
-       │
-       ├── RAG ──► Hybrid retrieval ──► BGE re-ranking ──► answer
-       │                │ low confidence
-       │                └──────────────► web-backed CRAG fallback
-       │
-       ├── WEB ───────────────► Serper search ──► LLM synthesis
-       ├── SUPPLY_CHAIN ──────► Text-to-Cypher ──► Neo4j/GDS ──► memo
-       ├── SITE_SELECTION ────► research ──► evaluate ──► save Markdown report
-       └── LLM ───────────────► direct model response
-                                     │
-                                     ▼
-                              PII guardrail + metrics
+┌────────────────────────────────────────────────────────────────┐
+│ Streamlit UI: workflow + chat model + conversation messages    │
+└──────────────────────────────┬─────────────────────────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │ Intent router       │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┴────────────────────┐
+              │ RAG intent                           │ Other intent
+              ▼                                      ▼
+     ┌─────────────────────┐              ┌──────────────────────┐
+     │ Dense vector search │              │ Domain executor      │
+     │ + BM25 lexical      │              └──────────┬───────────┘
+     │ retrieval           │                         │
+     └──────────┬──────────┘       ┌─────────────────┼─────────────────┐
+                ▼                  ▼                 ▼                 ▼
+     ┌─────────────────────┐    WEB / Serper   SITE_SELECTION     SUPPLY_CHAIN
+     │ BGE re-ranking      │    + LLM answer   research/evaluate   Neo4j/GDS
+     └──────────┬──────────┘                    + saved report     + memo
+                │
+          ┌─────┴────────────┐
+          │ relevance score  │
+          ├─────────────┬────┘
+          │ sufficient  │ below threshold
+          ▼             ▼
+     RAG answer     Serper-backed CRAG answer
+          └─────────────┬──────────────────────────────────────────┐
+                        ▼                                          │
+              ┌─────────────────────┐                              │
+              │ PII output guardrail│◄─────────────────────────────┘
+              │ + metrics           │
+              └──────────┬──────────┘
+                         ▼
+                    Chat response
 ```
 
-The main graph is implemented by `src/agent_graph.py`. Conversation state contains bounded chat messages, the selected model, classified intent, retrieved documents, the re-ranked relevance score, and the workflow start time. Responses are streamed to `app.py` with real-time status updates.
+For general-purpose requests, the domain executor calls the selected model directly. The graph and intent routing are implemented in `src/agent_graph.py`, `src/intent_router.py`, and `src/graph_nodes.py`. RAG state carries retrieved and re-ranked documents plus the relevance score used by the CRAG decision.
+
+### Autonomous Multi-Agent Mode
+
+The sidebar's **Workflow** selector defaults to **Default agentic AI flow**, preserving the original intent-routed graph. Choose **Autonomous multi-agent** to run a separate graph implemented in `src/autonomous_graph.py`.
+
+The selected chat model uses tool calling to choose among existing local RAG, web-search, supply-chain, and site-selection workflows. A supervisor delegates a task; the worker executes it; then a critic checks the result against the goal. The graph can return to the supervisor for a required specialist or a refinement before synthesizing the findings.
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│ Streamlit UI: user goal + selected chat model                    │
+└──────────────────────────────┬───────────────────────────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │ Initialize run      │
+                    │ goal, counters,     │
+                    │ findings, timer     │
+                    └──────────┬──────────┘
+                               ▼
+                    ┌─────────────────────┐
+          ┌────────►│ Supervisor          │◄────────────────────┐
+          │         │ required routing +  │                     │
+          │         │ model tool choice   │                     │
+          │         └──────────┬──────────┘                     │
+          │                    │                                │
+          │           ┌────────┴─────────┐                      │
+          │           ▼                  ▼                      │
+          │   ┌───────────────┐  ┌────────────────────────┐     │
+          │   │ RAG specialist│  │ Domain specialist      │     │
+          │   │ retrieve      │  │ WEB / SITE_SELECTION / │     │
+          │   │ rerank        │  │ SUPPLY_CHAIN / LLM     │     │
+          │   │ RAG or CRAG   │  └───────────┬────────────┘     │
+          │   └───────┬───────┘              │                  │
+          │           └──────────┬───────────┘                  │
+          │                      ▼                              │
+          │             ┌─────────────────────┐                 │
+          │             │ Append worker result│                 │
+          │             └──────────┬──────────┘                 │
+          │                        ▼                            │
+          │             ┌─────────────────────┐                 │
+          └─ retry /────│ Critic: relevance,  │                 │
+             missing   │ completeness, safety│                 │
+             evidence  └──────────┬──────────┘                 │
+                                  │                             │
+                         sufficient / limit reached             │
+                                  ▼                             │
+                        ┌─────────────────────┐                │
+                        │ Final synthesis     │                │
+                        └──────────┬──────────┘                │
+                                   ▼                            │
+                        ┌─────────────────────┐                │
+                        │ PII guardrail       │                │
+                        │ + metrics           │                │
+                        └──────────┬──────────┘                │
+                                   ▼                            │
+                              Chat response                     │
+```
+
+Explicit data-center or commercial site-selection requests require the dedicated site-selection worker; generic web search is not a substitute. When the request also asks about this assistant's features, both site-selection research and internal-document RAG are required before final synthesis. Broad West Indies/Caribbean requests use regional candidate hubs (San Juan, Santo Domingo, and Port of Spain) rather than falling back to United States locations. Specialist calls are capped at four per user turn.
+
+Autonomous conversations use `checkpoints_autonomous.sqlite`, separate from `checkpoints.sqlite`, so switching modes does not mix incompatible graph state. The selected model must support tool calling; provider/API errors are shown in the chat rather than silently switching back to the default workflow. This mode is bounded and uses the application's existing specialist workflows—it does not execute arbitrary generated code.
+
+### Data Flow and Persistence
+
+1. The UI collects the current user request, selected model, and recent conversation messages, then invokes the selected graph with a browser-specific thread ID.
+2. The default graph routes bounded messages, model, and intent through its selected nodes. RAG adds retrieved documents and a relevance score. The autonomous graph initializes the goal and counters, then accumulates specialist name, query, and result in `worker_results` for the supervisor, critic, and finalizer.
+3. RAG reads sanitized `.md` and `.txt` documents into Chroma, retrieves dense and BM25 candidates, fuses and re-ranks them, and generates from either local context or the CRAG web-search path. Domain workers call the corresponding web, Neo4j supply-chain, or site-selection workflow.
+4. The selected graph sends its final message through the shared output guardrail for PII sanitization and execution metrics. The UI displays streamed node status and the final response.
+5. LangGraph checkpoints persist conversation/workflow state in `checkpoints.sqlite` for the default graph and `checkpoints_autonomous.sqlite` for autonomous mode. Site-selection reports are separately written to `reports/`; runtime metrics are stored in the metrics SQLite database.
 
 ## Key Features
 
@@ -264,6 +362,7 @@ config/prompts_v1.json         Prompt and retrieval configuration
 documents/                     Source documents indexed at startup
 src/
   agent_graph.py               Main LangGraph state graph
+  autonomous_graph.py          Optional supervisor/worker/critic graph
   graph_nodes.py               Router, retrieval, RAG, web, domain, and guardrail nodes
   intent_router.py             Intent classification and site parameter extraction
   hybrid_search.py             BM25 and Reciprocal Rank Fusion
@@ -388,6 +487,12 @@ GROQ_API_KEY=your_groq_api_key
 # Required for OpenAI model selection
 OPENAI_API_KEY=your_openai_api_key
 
+# Optional: Gemini Developer API (Google AI Studio)
+GOOGLE_API_KEY=your_google_ai_studio_api_key
+
+# Optional: OpenRouter's free-model router
+OPENROUTER_API_KEY=your_openrouter_api_key
+
 # Required for live web and site-selection workflows
 SERPER_API_KEY=your_serper_api_key
 
@@ -415,7 +520,23 @@ streamlit run app.py
 
 Open `http://localhost:8501`.
 
-Ollama, Groq, and OpenAI are available in the chat-model selector. Ollama can provide local chat and embeddings; Groq requires `GROQ_API_KEY`; OpenAI requires `OPENAI_API_KEY`. RAG chooses local Hugging Face embedding resources when Groq is selected and Ollama embeddings for Ollama and OpenAI selections.
+Ollama, Groq, OpenAI, Google Gemini, and OpenRouter are available in the chat-model selector. Cloud options require their provider keys: Groq uses `GROQ_API_KEY`, OpenAI uses `OPENAI_API_KEY`, Gemini uses `GOOGLE_API_KEY` (or `GEMINI_API_KEY`), and OpenRouter uses `OPENROUTER_API_KEY`. RAG uses the local Hugging Face embedding model for cloud chat providers and Ollama embeddings only when Ollama chat is selected.
+
+#### Free-tier model setup
+
+The project includes the current Gemini Developer API model `gemini-3.8-flash`, Groq's `qwen/qwen3.8-27b` and `openai/gpt-oss-120b`, and OpenRouter's `openrouter/free` dynamic router. Provider free-tier quotas and model access can change; check each provider's current rate limits and pricing before use.
+
+1. **Google AI Studio:** sign in at [Google AI Studio API keys](https://aistudio.google.com/apikey), create or select a project, and create an API key. Add `GOOGLE_API_KEY=...` to the project `.env`. Gemini's free tier is limited to eligible models and quotas; Google's current terms say free-tier content may be used to improve its products, so do not send sensitive or confidential data.
+2. **GroqCloud:** sign in at [GroqCloud API Keys](https://console.groq.com/keys), create a key, and add or reuse `GROQ_API_KEY=...` in `.env`. Select either the existing Qwen model or GPT-OSS 120B in the model picker. Model availability and free account limits are controlled by Groq.
+3. **OpenRouter:** create/sign in to an [OpenRouter account](https://openrouter.ai), create an API key from its [Keys page](https://openrouter.ai/keys), and add `OPENROUTER_API_KEY=...` to `.env`. Choose **OpenRouter Free Model Router** in the model picker; it selects an available free model and filters for request capabilities such as tool calling. Free-model availability and rate limits vary. This option uses the `openrouter/free` router, rather than pinning a specific model slug.
+
+**Model naming note:** Gemini 2.5 Pro is deprecated by Google, is no longer available for new selection in AI Studio, and is scheduled to be automatically routed to Gemini 3.8 Flash from December 1, 2026. The selector therefore uses Gemini 3.8 Flash directly. OpenRouter model IDs and `:free` variants change over time; the examples DeepSeek V4 Flash and GLM-5 should only be selected if they appear in OpenRouter's current free-model catalog. The dynamic free router avoids pinning those unverified IDs.
+
+Install the new Gemini integration after adding it to `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
 
 ## Neo4j Setup
 

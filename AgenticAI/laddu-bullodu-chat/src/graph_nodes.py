@@ -16,7 +16,14 @@ from src.guardrails import sanitize_text
 from src.logger import log_status
 from src.site_selector import site_selection_graph
 from src.supply_chain import supply_chain_graph
-from src.llm_provider import GROQ_MODEL, OLLAMA_BASE_URL, get_chat_model, trim_chat_messages
+from src.llm_provider import (
+    GROQ_GPT_OSS_MODEL,
+    GROQ_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    get_chat_model,
+    trim_chat_messages,
+)
 from src.metrics_logger import log_execution
 
 EMBEDDING_MODEL = "embeddinggemma"
@@ -129,14 +136,17 @@ def retrieve_node(state: dict):
     """Retrieve candidate chunks using dense search and BM25, then fuse their rankings.
 
     Dense and lexical result counts use ``top_k_retrieval`` from configuration;
-    fused candidates are written to ``raw_docs`` for the reranker node. Groq
-    selection opts into the local embedding model in this workflow.
+    fused candidates are written to ``raw_docs`` for the reranker node. Cloud
+    chat models use the local embedding model so retrieval does not depend on a
+    reachable Ollama server; Ollama chat continues to use Ollama embeddings.
     """
     latest_query = state["messages"][-1].content
     selected_model = state.get("selected_model", GROQ_MODEL)
     
     log_status("Executing Hybrid Retrieval (Dense Vector + BM25 Lexical Search)...")
-    vectorstore = load_embeddings_and_vector_store(use_local_embeddings=selected_model == GROQ_MODEL)
+    vectorstore = load_embeddings_and_vector_store(
+        use_local_embeddings=selected_model != OLLAMA_MODEL
+    )
     
     dense_docs = vectorstore.similarity_search(latest_query, k=THRESHOLDS.get("top_k_retrieval", 20))
     hybrid_retriever = get_or_init_hybrid_retriever(vectorstore)
@@ -250,7 +260,16 @@ def output_guardrail_node(state: dict):
     content_str = ""
     if hasattr(last_msg, "content"):
         content_str = last_msg.content
-        for prefix in ("[RAG]", "[WEB]", "[WEB - CRAG FALLBACK]", "[LLM]", "[SITE SELECTION]", "[SUPPLY_CHAIN]"):
+        response_badges = (
+            "[RAG]",
+            "[WEB]",
+            "[WEB - CRAG FALLBACK]",
+            "[LLM]",
+            "[SITE SELECTION]",
+            "[SUPPLY_CHAIN]",
+            "[AUTONOMOUS]",
+        )
+        for prefix in response_badges:
             if content_str.startswith(prefix):
                 badge = prefix
                 content_str = content_str[len(prefix):].strip()
