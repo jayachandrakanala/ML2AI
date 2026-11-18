@@ -101,6 +101,7 @@ if current_checkpoint and current_checkpoint.next:
     with st.chat_message("assistant"):
         with st.status("Resuming agentic workflow from checkpoint...", expanded=True) as status:
             def update_status(msg: str):
+                """Show a checkpoint-resumption update in the active Streamlit status panel."""
                 status.update(label=msg)
                 st.write(f"• {msg}")
 
@@ -143,6 +144,7 @@ if prompt := st.chat_input("Ask a question or request a site selection report...
     with st.chat_message("assistant"):
         with st.status("Initializing agentic workflow...", expanded=True) as status:
             def update_status(msg: str):
+                """Render graph-node progress in the active Streamlit status panel."""
                 status.update(label=msg)
                 st.write(f"• {msg}")
 

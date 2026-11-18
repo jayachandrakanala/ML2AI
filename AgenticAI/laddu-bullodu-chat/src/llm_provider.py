@@ -23,7 +23,13 @@ MODEL_LABELS = {
 
 
 def trim_chat_messages(messages: list, max_chars: int = 16000) -> list:
-    """Bound Groq request context by keeping system prompts and recent messages."""
+    """Prioritize system instructions and recent conversation within a character budget.
+
+    System content is retained first and truncated when necessary. Remaining
+    messages are considered newest-first; the newest message is kept even if it
+    alone exceeds the remaining budget. Supports both LangChain messages and
+    role/content dictionaries.
+    """
     system_messages = []
     conversation_messages = []
     for message in messages:
@@ -61,7 +67,12 @@ def trim_chat_messages(messages: list, max_chars: int = 16000) -> list:
 
 @lru_cache(maxsize=3)
 def get_chat_model(model_name: str = OLLAMA_MODEL):
-    """Return a cached chat model, raising a clear error for missing config."""
+    """Return a cached Ollama, Groq, or OpenAI chat client by configured model name.
+
+    Groq and OpenAI require their respective API-key environment variables.
+    The LRU cache holds at most one client per supported model; unknown names
+    and missing credentials raise ``ValueError``.
+    """
     if model_name == OLLAMA_MODEL:
         return ChatOllama(
             model=OLLAMA_MODEL,

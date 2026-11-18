@@ -29,7 +29,11 @@ PROMPTS = CONFIG["prompts"]
 THRESHOLDS = CONFIG["thresholds"]
 
 def estimate_token_cost(model_name: str, text_content: str) -> float:
-    """Estimates inference cost based on character length / token approximation."""
+    """Estimate request cost from text length using a four-characters-per-token heuristic.
+
+    The estimate is telemetry only, not a provider billing calculation; model
+    names containing ``70b`` use the higher per-million-token rate.
+    """
     tokens = len(text_content) / 4  # ~4 chars per token heuristic
     if "70b" in model_name.lower():
         return (tokens / 1_000_000) * 0.70  # ~$0.70 per million tokens
@@ -37,7 +41,12 @@ def estimate_token_cost(model_name: str, text_content: str) -> float:
 
 @st.cache_resource
 def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
-    """Create embedding model and persistent vector index with guarded chunks."""
+    """Load the selected embedding backend and its persistent Chroma collection.
+
+    Reads ``.txt`` and ``.md`` files from ``documents/``, sanitizes PII before
+    indexing, splits content into overlapping 500-character chunks, and stores
+    source metadata. Local and Ollama embeddings use separate collection names.
+    """
     if use_local_embeddings:
         from src.local_embeddings import LocalEmbeddingGemmaEmbeddings
         log_status("Loading local Hugging Face EmbeddingGemma model...")
@@ -82,7 +91,12 @@ def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
 _hybrid_retriever = None
 
 def get_or_init_hybrid_retriever(vectorstore, documents: list = None) -> HybridRetriever:
-    """Initializes or retrieves the global BM25 hybrid index from ChromaDB."""
+    """Build the process-wide BM25 index from supplied or persisted Chroma documents.
+
+    The index is initialized lazily and reused for subsequent requests. Pass
+    ``documents`` to avoid reading the collection; otherwise documents and
+    metadata are fetched from Chroma. The cached index is not refreshed here.
+    """
     global _hybrid_retriever
     if _hybrid_retriever is None:
         if documents is None:
@@ -96,7 +110,10 @@ def get_or_init_hybrid_retriever(vectorstore, documents: list = None) -> HybridR
     return _hybrid_retriever
 
 def router_node(state: dict):
-    """Classifies user intent and sets initial routing state and execution timer."""
+    """Find the latest user message, classify its intent, and start latency timing.
+
+    Mutates and returns the graph state with ``intent`` and ``start_time`` set.
+    """
     state["start_time"] = time.time()  # Stamped for latency calculation
     latest_query = ""
     for msg in reversed(state["messages"]):
@@ -109,7 +126,12 @@ def router_node(state: dict):
     return state
 
 def retrieve_node(state: dict):
-    """Executes Hybrid Retrieval (Dense Vector + BM25 Lexical Search) via RRF."""
+    """Retrieve candidate chunks using dense search and BM25, then fuse their rankings.
+
+    Dense and lexical result counts use ``top_k_retrieval`` from configuration;
+    fused candidates are written to ``raw_docs`` for the reranker node. Groq
+    selection opts into the local embedding model in this workflow.
+    """
     latest_query = state["messages"][-1].content
     selected_model = state.get("selected_model", GROQ_MODEL)
     
@@ -125,7 +147,11 @@ def retrieve_node(state: dict):
     return state
 
 def rerank_node(state: dict):
-    """Passes raw docs through the BGE Cross-Encoder re-ranker."""
+    """Score fused candidates with the BGE cross-encoder and store top chunks and score.
+
+    The configured ``top_k_rerank`` determines the retained documents, while the
+    maximum model score is used by the conditional CRAG edge.
+    """
     latest_query = state["messages"][-1].content
     raw_docs = state.get("raw_docs", [])
     top_docs, top_score = rerank_documents(latest_query, raw_docs, top_k=THRESHOLDS.get("top_k_rerank", 3))
@@ -134,7 +160,13 @@ def rerank_node(state: dict):
     return state
 
 def domain_executor_node(state: dict):
-    """Handles non-RAG intents (Supply Chain, Site Selection, Web, LLM)."""
+    """Dispatch a classified non-RAG request to its domain workflow or chat model.
+
+    Supply-chain and site-selection intents invoke their dedicated LangGraph
+    subgraphs; web intent adds Serper results to the prompt; other intents use
+    direct model conversation. The resulting tagged ``AIMessage`` is appended
+    to the mutable graph state.
+    """
     intent = state.get("intent", "LLM")
     latest_query = state["messages"][-1].content
     selected_model = state.get("selected_model", GROQ_MODEL)
@@ -168,7 +200,11 @@ def domain_executor_node(state: dict):
     return state
 
 def rag_generate_node(state: dict):
-    """Generates the final RAG response using high-confidence re-ranked local context."""
+    """Generate an answer from re-ranked local chunks and the configured RAG prompt.
+
+    Context is capped at 9,000 characters, then combined with bounded chat
+    history before the selected model is invoked.
+    """
     top_docs = state.get("top_docs", [])
     selected_model = state.get("selected_model", GROQ_MODEL)
     context_text = "\n\n".join([doc.page_content for doc in top_docs])
@@ -181,7 +217,11 @@ def rag_generate_node(state: dict):
     return state
 
 def crag_fallback_node(state: dict):
-    """Corrective RAG (CRAG) Fallback for low re-ranker scores."""
+    """Answer with live Serper results when local-document relevance is too low.
+
+    Search failures are included in the model context as text; results are
+    capped before invocation and the response is tagged for downstream display.
+    """
     latest_query = state["messages"][-1].content
     selected_model = state.get("selected_model", GROQ_MODEL)
     try:
@@ -197,7 +237,12 @@ def crag_fallback_node(state: dict):
     return state
 
 def output_guardrail_node(state: dict):
-    """Sanitizes assistant response, computes telemetry metrics, and logs execution to SQLite."""
+    """Sanitize the final response and record latency, estimated cost, and intent metrics.
+
+    Preserves a recognized response badge while applying PII redaction to its
+    content. Metrics persistence failures are reported through the status logger
+    and do not replace the completed assistant response.
+    """
     log_status("Checking output response against PII guardrails & calculating telemetry...")
     last_msg = state["messages"][-1]
     

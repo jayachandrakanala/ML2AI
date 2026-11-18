@@ -24,7 +24,11 @@ from openinference.instrumentation.langchain import LangChainInstrumentor
 
 @st.cache_resource
 def init_telemetry():
-    """Initialize persistent Phoenix storage and export application traces across restarts."""
+    """Start the persistent Phoenix trace server and instrument LangChain calls.
+
+    Streamlit caches the tracer provider as a resource. A startup/instrumentation
+    failure returns ``None`` so the chat app remains usable without telemetry.
+    """
     try:
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
             px_session = px.launch_app(use_temp_dir=False)

@@ -30,12 +30,20 @@ CONFIG = load_version_config()
 THRESHOLDS = CONFIG["thresholds"]
 
 def add_bounded_messages(existing: list, new_messages: list) -> list:
-    """Merge new messages, then retain only the recent context window."""
+    """Merge LangGraph message updates and retain the latest 12 conversation entries.
+
+    This function is the reducer for ``State.messages``; LangGraph calls it when
+    nodes return message updates, so the bound applies across graph transitions.
+    """
     merged = add_messages(existing, new_messages)
     return merged[-12:]
 
 class State(TypedDict):
-    """Conversation state passed between nodes in the assistant graph."""
+    """Shared data contract for the assistant graph's nodes.
+
+    ``messages`` is accumulated through ``add_bounded_messages``. Other keys are
+    optional because only nodes on the selected intent path populate them.
+    """
     messages: Annotated[list, add_bounded_messages]
     selected_model: NotRequired[str]
     intent: NotRequired[str]
@@ -45,11 +53,14 @@ class State(TypedDict):
     start_time: NotRequired[float]
 
 def route_after_router(state: State):
-    """Directs graph flow based on classified intent."""
+    """Send local-document intents to retrieval and all other intents to domain handling."""
     return "retrieve_node" if state.get("intent", "LLM") == "RAG" else "domain_executor_node"
 
 def route_after_rerank(state: State):
-    """Corrective RAG conditional edge based on re-ranker threshold."""
+    """Choose local RAG generation or web fallback using the configured CRAG score threshold.
+
+    A missing relevance score is treated as zero, which routes to the fallback.
+    """
     return "crag_fallback_node" if state.get("top_relevance_score", 0.0) < THRESHOLDS.get("crag_relevance_threshold", 0.4) else "rag_generate_node"
 
 # Assemble the StateGraph Workflow
@@ -87,7 +98,12 @@ app_graph = workflow.compile(checkpointer=sqlite_checkpointer)
 
 
 def stream_graph(state, config, stream_mode="updates"):
-    """Stream one session with a connection owned by this execution thread."""
+    """Yield LangGraph updates while owning a short-lived SQLite checkpointer connection.
+
+    A fresh connection is opened for each invocation to avoid sharing SQLite
+    connections across Streamlit execution threads. ``state`` may be ``None``
+    when resuming an existing checkpoint; ``config`` supplies the thread ID.
+    """
     with SqliteSaver.from_conn_string(DB_PATH) as session_checkpointer:
         session_checkpointer.conn.execute("PRAGMA busy_timeout=30000")
         graph = workflow.compile(checkpointer=session_checkpointer)
@@ -95,7 +111,11 @@ def stream_graph(state, config, stream_mode="updates"):
 
 
 def invoke_graph(state, config):
-    """Invoke one session with thread-local SQLite checkpoint ownership."""
+    """Run the graph to completion with a short-lived, thread-owned checkpoint connection.
+
+    The returned value is the final graph state; ``config`` identifies the
+    checkpoint thread to continue or create.
+    """
     with SqliteSaver.from_conn_string(DB_PATH) as session_checkpointer:
         session_checkpointer.conn.execute("PRAGMA busy_timeout=30000")
         graph = workflow.compile(checkpointer=session_checkpointer)
@@ -103,7 +123,11 @@ def invoke_graph(state, config):
 
 
 def get_latest_thread_state(thread_id: str):
-    """Read one browser session's checkpoint using an isolated SQLite connection."""
+    """Read the saved LangGraph state for one browser thread using an isolated connection.
+
+    The graph is compiled against the same SQLite checkpoint database used by
+    streaming and invocation, allowing the UI to detect and resume interruptions.
+    """
     config = {"configurable": {"thread_id": thread_id}}
     with SqliteSaver.from_conn_string(DB_PATH) as session_checkpointer:
         session_checkpointer.conn.execute("PRAGMA busy_timeout=30000")

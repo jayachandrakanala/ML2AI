@@ -12,12 +12,13 @@ except Exception as e:
 
 
 def sanitize_text(text: str) -> str:
-    """Remove supported PII using Presidio when available and regex fallbacks.
+    """Redact selected contact details and numeric IDs before text leaves the app.
 
     Person names are deliberately excluded from Presidio detection to avoid
     redacting public figures. Empty input passes through unchanged; regex rules
-    still run after Presidio so domain-specific IDs and common contacts are
-    covered even when the NLP analyzer is unavailable.
+    still run after Presidio so 5-8 digit IDs, email addresses, and phone
+    numbers are covered even when the NLP analyzer is unavailable. Presidio
+    detection is limited to email, phone, SSN, and credit-card entities.
     """
     if not text:
         return text

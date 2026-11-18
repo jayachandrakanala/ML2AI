@@ -5,7 +5,13 @@ from src.logger import log_status
 from src.llm_provider import GROQ_MODEL, get_chat_model
 
 def route_intent(query: str) -> str:
-    """Choose a processing path by checking the query against keyword groups."""
+    """Classify a query into a workflow intent using ordered keyword heuristics.
+
+    Supply-chain checks run first, followed by site selection, web search, and
+    local-document RAG; unmatched queries use direct LLM handling. Because
+    matching is substring-based, add specific phrases carefully to avoid
+    changing routing precedence for existing queries.
+    """
     query_lower = query.lower()
 
     sc_keywords = [
@@ -60,7 +66,12 @@ def route_intent(query: str) -> str:
     return "LLM"
 
 def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tuple:
-    """Extract the requested country and locations for a site-selection run dynamically with regional safeguards."""
+    """Extract a country and candidate cities, with region-aware defaults as fallback.
+
+    The selected model is asked for JSON containing ``country`` and ``locations``.
+    International-region defaults override accidental US-city results; missing,
+    invalid, or failed model output falls back to the inferred regional defaults.
+    """
     log_status("Analyzing user query for site selection parameters...")
     extraction_prompt = f"""
     You are a precise data extraction assistant for commercial real estate and data center site selection.

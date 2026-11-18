@@ -5,7 +5,11 @@ from pathlib import Path
 CONFIG_PATH = Path("./config/prompts_v1.json")
 
 def load_version_config() -> dict:
-    """Loads versioned prompts and thresholds from external JSON config."""
+    """Load prompts and thresholds from ``config/prompts_v1.json`` or use built-in defaults.
+
+    If the file is absent or cannot be parsed, callers receive the default
+    version, CRAG/retrieval thresholds, and system prompts defined below.
+    """
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:

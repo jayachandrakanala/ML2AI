@@ -66,7 +66,11 @@ EVAL_DATASET = [
 ]
 
 def run_assistant_pipeline(query: str):
-    """Invokes the LangGraph app_graph and extracts output content and retrieved contexts."""
+    """Run one query through the compiled assistant graph for RAGAS evaluation.
+
+    Returns the final answer and context strings, preferring re-ranked local
+    documents, then graph context, and finally a placeholder for non-RAG paths.
+    """
     initial_state = {
         "messages": [{"role": "user", "content": query}],
         "selected_model": GROQ_MODEL
@@ -87,6 +91,11 @@ def run_assistant_pipeline(query: str):
     return answer_text, retrieved_contexts
 
 def evaluate_offline():
+    """Run the curated evaluation set and write RAGAS scores to a local CSV.
+
+    The evaluation judge uses Groq while embeddings use the local
+    EmbeddingGemma adapter; no hosted embedding API is needed.
+    """
     print("🚀 Starting Offline RAGAS Evaluation Suite (10 Scenarios)...")
     
     questions = []

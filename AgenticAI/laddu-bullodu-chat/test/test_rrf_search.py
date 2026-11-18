@@ -3,6 +3,11 @@ from src.agent_graph import load_embeddings_and_vector_store
 from src.hybrid_search import HybridRetriever, reciprocal_rank_fusion
 
 def test_retrieval_comparison():
+    """Print dense, BM25, and RRF rankings for a sample order query.
+
+    This is a manual integration check: it reads the configured Chroma index
+    and does not contain assertions about exact ranking order.
+    """
     query = "ORD-8802"
     print(f"🔍 Testing Retrieval Methods for Query: '{query}'\n")
 

@@ -9,6 +9,11 @@ _model_lock = threading.Lock()
 # Load cached CrossEncoder model to avoid reloading weights on every graph invocation
 @st.cache_resource
 def load_reranker_model():
+    """Load the CPU-backed BGE cross-encoder once per Streamlit resource cache.
+
+    A module lock prevents concurrent first-load attempts from initializing
+    the same model weights simultaneously.
+    """
     log_status("Loading open-source BAAI bge-reranker-large model...")
     # BGE reranker outputs raw logits or probabilities depending on usage; 
     # higher score = higher relevance.
@@ -16,8 +21,11 @@ def load_reranker_model():
         return CrossEncoder("BAAI/bge-reranker-large", device="cpu")
 
 def rerank_documents(query: str, documents: list, top_k: int = 3):
-    """Passes retrieved raw documents through the BGE Cross-Encoder re-ranker,
-    sorts them by relevance, and returns the top-k high-confidence chunks along with the max score.
+    """Score query/document pairs and return the highest-ranked chunks and top score.
+
+    Scores are the cross-encoder's raw predictions, not calibrated probabilities;
+    the graph uses the maximum score for its configured CRAG threshold. Empty
+    input returns no documents and a zero score without loading the model.
     """
     if not documents:
         return [], 0.0

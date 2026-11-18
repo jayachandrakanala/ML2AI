@@ -7,7 +7,7 @@ METRICS_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "metrics
 Path(METRICS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 def init_metrics_db():
-    """Initializes the SQLite metrics telemetry database."""
+    """Create the metrics database directory and execution-log table if needed."""
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute("""
@@ -26,7 +26,11 @@ def init_metrics_db():
     conn.close()
 
 def log_execution(thread_id: str, intent: str, latency_seconds: float, token_cost: float, citation_mode: str, status: str = "SUCCESS"):
-    """Logs a completed graph execution turn with latency, cost, and citation telemetry."""
+    """Append one completed workflow turn and its operational measurements to SQLite.
+
+    ``token_cost`` is the application's estimate; ``citation_mode`` stores the
+    response badge/path used for the turn.
+    """
     init_metrics_db()
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
@@ -38,7 +42,12 @@ def log_execution(thread_id: str, intent: str, latency_seconds: float, token_cos
     conn.close()
 
 def get_metrics_summary() -> dict:
-    """Computes p50/p95 latency, total cost, failure rates, and citation distributions."""
+    """Aggregate all stored executions into latency, estimated cost, failure, and badge metrics.
+
+    Latency percentiles are selected from sorted successful-turn samples; cost,
+    request count, and failure rate include all logged rows. An empty database
+    returns zero values and an empty citation-count mapping.
+    """
     init_metrics_db()
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
     cursor = conn.cursor()

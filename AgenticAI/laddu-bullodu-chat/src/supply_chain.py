@@ -21,6 +21,7 @@ neo4j_graph = Neo4jGraph(
 )
 
 class SupplyChainState(TypedDict):
+    """State contract for Cypher generation, graph analytics, and mitigation synthesis."""
     query: str
     selected_model: NotRequired[str]
     generated_cypher: str
@@ -29,7 +30,13 @@ class SupplyChainState(TypedDict):
     final_mitigation_memo: str
 
 def text_to_cypher_node(state: SupplyChainState) -> Dict[str, Any]:
-    """Uses the selected LLM to dynamically generate accurate Cypher based on user query and schema examples."""
+    """Generate a schema-constrained Cypher query, execute it, and save graph context.
+
+    The selected model receives the supported node/relationship schema and
+    examples. Markdown fences are removed before execution; generation errors
+    use a fixed query, and query errors trigger a second fixed graph query.
+    Returns the generated query and serialized records for the synthesis node.
+    """
     user_query = state["query"]
     selected_model = state.get("selected_model", OLLAMA_MODEL)
     log_status(f"LLM generating dynamic Cypher query for user prompt: '{user_query}'...")
@@ -132,7 +139,12 @@ User Question: {user_query}
     return {"generated_cypher": cypher, "graph_context": context_str}
 
 def calculate_gds_optimal_route(state: SupplyChainState) -> Dict[str, Any]:
-    """Dedicated Node: Executes Neo4j GDS Dijkstra shortest path calculation using composite weights."""
+    """Project the supply-chain network and run weighted Neo4j GDS Dijkstra routing.
+
+    Relationship weight combines transit days with a scaled cost multiplier.
+    The current query evaluates the configured Shenzhen-port-to-US-facility
+    path; GDS failures produce a medium-feasibility intermodal fallback entry.
+    """
     log_status("Running GDS Dijkstra weighted pathfinding on in-memory graph projection...")
     
     gds_routes = []
@@ -195,7 +207,12 @@ def calculate_gds_optimal_route(state: SupplyChainState) -> Dict[str, Any]:
 
 
 def llm_reasoning_synthesizer(state: SupplyChainState) -> Dict[str, Any]:
-    """Synthesizer Node: Uses the LLM to reason over graph context and write a tailored response."""
+    """Turn retrieved graph records and route analytics into a user-facing mitigation memo.
+
+    The prompt directs the model to answer from the supplied data, calculate
+    revenue exposure when requested, and format findings as Markdown. If model
+    invocation fails, the node returns a plain context-based summary.
+    """
     log_status("LLM synthesizing tailored response based on retrieved graph intelligence...")
     
     user_query = state["query"]

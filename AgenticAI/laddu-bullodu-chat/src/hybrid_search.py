@@ -5,12 +5,18 @@ from langchain_core.documents import Document
 class HybridRetriever:
     """Manages lexical BM25 indexing over project documentation chunks."""
     def __init__(self, documents: list[Document]):
+        """Build a BM25 index over lowercased, whitespace-tokenized page content."""
         self.documents = documents
         # Tokenize corpus text for BM25 lexical matching
         tokenized_corpus = [doc.page_content.lower().split() for doc in documents]
         self.bm25 = BM25Okapi(tokenized_corpus)
 
     def bm25_search(self, query: str, k: int = 20) -> list[tuple[Document, float]]:
+        """Return up to ``k`` positive-scoring documents in descending BM25 order.
+
+        Scores are the raw BM25 values and are not directly comparable to dense
+        vector similarity scores; fusion uses each result's rank instead.
+        """
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
@@ -23,9 +29,12 @@ def reciprocal_rank_fusion(
     k: int = 60, 
     top_k: int = 20
 ) -> list[Document]:
-    """
-    Merges dense vector results and BM25 lexical results using Reciprocal Rank Fusion (RRF).
-    RRF(d) = sum( 1 / (k + rank_m(d)) ) across retrieval methods.
+    """Merge dense and BM25 rankings using Reciprocal Rank Fusion.
+
+    Each appearance contributes ``1 / (k + rank)`` with one-based ranks. The
+    first 150 characters of page content identify a document across result
+    lists, so chunks sharing that prefix are treated as the same item. Return
+    at most ``top_k`` unique documents in descending combined score order.
     """
     rrf_scores = {}
     doc_map = {}

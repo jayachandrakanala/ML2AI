@@ -152,7 +152,7 @@ TEST_SCENARIOS = [
 # ------------------------------------------------------------------------------
 @pytest.mark.parametrize("scenario", TEST_SCENARIOS, ids=[s["id"] for s in TEST_SCENARIOS])
 def test_intent_routing_classification(scenario):
-    """Verify that all 20 complex supply chain prompts are routed to SUPPLY_CHAIN intent."""
+    """Assert that each parametrized supply-chain prompt selects the specialist route."""
     query = scenario["query"]
     intent = route_intent(query)
     assert intent == "SUPPLY_CHAIN", (
@@ -166,7 +166,11 @@ def test_intent_routing_classification(scenario):
 # ------------------------------------------------------------------------------
 @pytest.mark.parametrize("scenario", TEST_SCENARIOS, ids=[s["id"] for s in TEST_SCENARIOS])
 def test_supply_chain_subgraph_reasoning(scenario):
-    """Verify that the LangGraph sub-graph executes Cypher generation, GDS pathfinding, and LLM reasoning."""
+    """Exercise the Neo4j/GDS/LLM subgraph and check for at least one scenario keyword.
+
+    This integration test requires a reachable configured Neo4j database and
+    the selected chat model to be available.
+    """
     query = scenario["query"]
     
     result = supply_chain_graph.invoke({
@@ -190,7 +194,12 @@ def test_supply_chain_subgraph_reasoning(scenario):
 # Test 3: End-to-End Agent Workflow & Guardrail Check
 # ------------------------------------------------------------------------------
 def test_end_to_end_financial_impact_workflow():
-    """Perform a full end-to-end integration test through app_graph for the flagship revenue prompt."""
+    """Run the flagship revenue-risk question through the full assistant graph.
+
+    Verifies the supply-chain response badge, the expected total exposure, and
+    both impacted order IDs; this integration path needs the app's dependencies
+    and external service configuration.
+    """
     flagship_prompt = "What is our revenue at risk due to the current shipping delays at the Port of Los Angeles?"
     
     result = app_graph.invoke({
