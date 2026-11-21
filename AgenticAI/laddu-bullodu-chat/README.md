@@ -15,7 +15,12 @@
   - [🛠️ Technology Stack](#️-technology-stack)
   - [Architecture and Data Flow](#architecture-and-data-flow)
     - [Default Agentic AI Flow](#default-agentic-ai-flow)
-    - [Autonomous Agentic Loop](#autonomous-agentic-loop)
+    - [Autonomous Multi-Agent Mode](#autonomous-multi-agent-mode)
+      - [Autonomous Agentic Loop](#autonomous-agentic-loop)
+      - [Run Initialization and Shared State](#run-initialization-and-shared-state)
+      - [Specialist Routing and Execution](#specialist-routing-and-execution)
+      - [Critique, Retry, and Stop Conditions](#critique-retry-and-stop-conditions)
+      - [Synthesis, Guardrails, and Persistence](#synthesis-guardrails-and-persistence)
     - [Data Flow and Persistence](#data-flow-and-persistence)
   - [Key Features](#key-features)
     - [🏢 Multi-Agent Site Selection](#-multi-agent-site-selection)
@@ -23,7 +28,6 @@
     - [🔎 Hybrid Retrieval and Corrective RAG](#-hybrid-retrieval-and-corrective-rag)
     - [🛡️ Guardrails and Privacy](#️-guardrails-and-privacy)
     - [📦 Supply-Chain Graph Intelligence](#-supply-chain-graph-intelligence)
-  - [Autonomous Multi-Agent Mode](#autonomous-multi-agent-mode)
   - [Project Structure](#project-structure)
   - [Module Responsibilities](#module-responsibilities)
     - [`app.py`](#apppy)
@@ -44,6 +48,7 @@
   - [Runtime Data](#runtime-data)
   - [Configuration](#configuration)
   - [Running Tests](#running-tests)
+  - [LLMOps: Implementation and Advantages](#llmops-implementation-and-advantages)
   - [Screenshots](#screenshots)
   - [Concept Notes](#concept-notes)
 - [LLM Evaluation \& Observability Platforms: Comparison Guide](#llm-evaluation--observability-platforms-comparison-guide)
@@ -248,7 +253,9 @@ For general-purpose requests, the domain executor calls the selected model direc
 
 The sidebar's **Workflow** selector defaults to **Default agentic AI flow**, preserving the original intent-routed graph. Choose **Autonomous multi-agent** to run a separate graph implemented in `src/autonomous_graph.py`.
 
-The selected chat model uses tool calling to choose among existing local RAG, web-search, supply-chain, and site-selection workflows. A supervisor delegates a task; the worker executes it; then a critic checks the result against the goal. The graph can return to the supervisor for a required specialist or a refinement before synthesizing the findings.
+#### Autonomous Agentic Loop
+
+The autonomous mode runs a separate LangGraph loop. It reuses the project's existing specialist workflows rather than creating a different copy of the RAG, web-search, supply-chain, or site-selection logic. The selected chat model must support tool calling because it chooses the next specialist and reviews results.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
@@ -272,7 +279,7 @@ The selected chat model uses tool calling to choose among existing local RAG, we
           │   ┌───────────────┐  ┌────────────────────────┐     │
           │   │ RAG specialist│  │ Domain specialist      │     │
           │   │ retrieve      │  │ WEB / SITE_SELECTION / │     │
-          │   │ rerank        │  │ SUPPLY_CHAIN / LLM     │     │
+          │   │ rerank        │  │ SUPPLY_CHAIN           │     │
           │   │ RAG or CRAG   │  └───────────┬────────────┘     │
           │   └───────┬───────┘              │                  │
           │           └──────────┬───────────┘                  │
@@ -300,16 +307,54 @@ The selected chat model uses tool calling to choose among existing local RAG, we
                               Chat response                     │
 ```
 
-Explicit data-center or commercial site-selection requests require the dedicated site-selection worker; generic web search is not a substitute. When the request also asks about this assistant's features, both site-selection research and internal-document RAG are required before final synthesis. Broad West Indies/Caribbean requests use regional candidate hubs (San Juan, Santo Domingo, and Port of Spain) rather than falling back to United States locations. Specialist calls are capped at four per user turn.
+##### Run Initialization and Shared State
 
-Autonomous conversations use `checkpoints_autonomous.sqlite`, separate from `checkpoints.sqlite`, so switching modes does not mix incompatible graph state. The selected model must support tool calling; provider/API errors are shown in the chat rather than silently switching back to the default workflow. This mode is bounded and uses the application's existing specialist workflows—it does not execute arbitrary generated code.
+The graph begins by taking the latest user message as the run's **goal**, initializing an empty findings list, clearing critic feedback, setting the worker/supervisor counters, and recording the start time. The shared `AutonomousState` carries the goal, selected model, conversation messages, findings, current tool choice and query, critique, and completion state through the graph.
+
+##### Specialist Routing and Execution
+
+The supervisor first checks whether the request contains an explicit task that must use a particular specialist:
+
+- Data-center or commercial real-estate site-selection language requires `delegate_to_site_selection`.
+- A request to explain this assistant's implemented features or capabilities requires `delegate_to_project_docs`, which reads the checked-in feature note directly.
+- A question about this project's autonomous routing/review requires `delegate_to_project_docs`, which reads the checked-in workflow document directly instead of relying on similarity scores.
+- Weather or temperature questions require `delegate_to_web_search`; the WEB specialist uses Open-Meteo's geocoding and forecast APIs for a location-specific observation and local-day forecast.
+- If site selection is combined with assistant-feature or workflow questions, site selection runs first, followed by the required RAG or project-document specialist. Every explicit required task must run before the graph may finish.
+
+After required specialists have run, the selected model receives the original goal, bounded prior findings, critic feedback, and number of calls used. It must choose one tool: `delegate_to_rag`, `delegate_to_project_docs`, `delegate_to_web_search`, `delegate_to_supply_chain`, `delegate_to_site_selection`, or `finish_task`. A generic web-search call is not a replacement for an explicitly requested site-selection analysis.
+
+The worker executes the selected tool and records its name, query, and result. Results are sanitized before being added to `worker_results`.
+
+| Specialist | Work performed |
+| --- | --- |
+| `delegate_to_rag` | Searches local documents using dense vector and BM25 retrieval, combines rankings, re-ranks candidates, then answers from local context or uses the existing CRAG web fallback when relevance is below threshold. |
+| `delegate_to_project_docs` | Reads checked-in feature/workflow documents directly for deterministic, project-specific capabilities and routing/review details. |
+| `delegate_to_web_search` | Uses Open-Meteo for weather and local-day forecasts; other current-information requests use Serper followed by synthesis from the selected chat model. |
+| `delegate_to_supply_chain` | Invokes the supply-chain LangGraph for entity, order, supplier, component, disruption, and routing analysis using Neo4j. |
+| `delegate_to_site_selection` | Extracts the target region and candidate locations; searches zoning/environment, power, water supply/cooling, and tax/financial information for each location; asks the selected model to evaluate candidates; then produces and saves a Markdown comparison report under `reports/`. |
+
+For broad West Indies/Caribbean site-selection requests, the current regional defaults are San Juan, Santo Domingo, and Port of Spain. These are comparison hubs, not a claim that the workflow has validated a specific parcel or project.
+
+##### Critique, Retry, and Stop Conditions
+
+After every worker result, a critic model reviews all findings collectively against every part of the goal, along with the latest contribution. It returns a JSON decision indicating whether the combined evidence is complete and feedback describing missing evidence or a refinement. A worker need not answer a different subtask already covered by an earlier specialist. If a required specialist has not yet run, the graph continues to it even if the previous result was marked complete. Otherwise, an incomplete result sends control back to the supervisor, which may delegate a different specialist or a refined query. Site selection is a fixed multi-search-and-report pipeline and runs at most once per request; after it runs, remaining evidence gaps are surfaced in the final answer instead of rerunning the same research and generating potentially conflicting reports.
+
+The loop is bounded to **four specialist executions per user turn** (`MAX_WORKER_ROUNDS`). The graph also caps supervisor turns at five. When either limit is reached, it stops delegating and synthesizes the findings gathered so far. These limits prevent unbounded loops; they do not guarantee that all external data is complete or that a model's critique is correct.
+
+##### Synthesis, Guardrails, and Persistence
+
+When the supervisor calls `finish_task`, or when the critic/limits route the graph to completion, the finalizer combines the available specialist findings into a Markdown answer. It is instructed to distinguish supported facts from uncertainty and not invent evidence. If no specialist findings exist, it uses the supervisor's proposed answer. The response is tagged `[AUTONOMOUS]`, then sent through the shared output guardrail for PII sanitization and metrics.
+
+Autonomous checkpoints are stored separately in `checkpoints_autonomous.sqlite`, keeping them isolated from the default flow's `checkpoints.sqlite`. Checkpoints are keyed by the browser's workflow-specific thread ID and support interrupted-run resumption. Site-selection reports are separately saved under `reports/`; the final chat response and checkpoint do not replace that report.
+
+The flow does not execute arbitrary generated code, and it does not guarantee factual correctness. Web and site-selection quality depend on search-provider availability and the evidence returned; verify consequential investment, regulatory, power, and connectivity claims against primary sources.
 
 ### Data Flow and Persistence
 
 1. The UI collects the current user request, selected model, and recent conversation messages, then invokes the selected graph with a browser-specific thread ID.
 2. The default graph routes bounded messages, model, and intent through its selected nodes. RAG adds retrieved documents and a relevance score. The autonomous graph initializes the goal and counters, then accumulates specialist name, query, and result in `worker_results` for the supervisor, critic, and finalizer.
 3. RAG reads sanitized `.md` and `.txt` documents into Chroma, retrieves dense and BM25 candidates, fuses and re-ranks them, and generates from either local context or the CRAG web-search path. Domain workers call the corresponding web, Neo4j supply-chain, or site-selection workflow.
-4. The selected graph sends its final message through the shared output guardrail for PII sanitization and execution metrics. The UI displays streamed node status and the final response.
+4. While nodes run, the UI updates a workflow-specific execution diagram: the default graph highlights its router and active RAG/domain path, while autonomous mode highlights supervisor, selected specialist, critic/retry, synthesis, and guardrail stages. Streamed status messages update the active step during longer specialist calls. The selected graph sends its final message through the shared output guardrail for PII sanitization and execution metrics, then displays the response.
 5. LangGraph checkpoints persist conversation/workflow state in `checkpoints.sqlite` for the default graph and `checkpoints_autonomous.sqlite` for autonomous mode. Site-selection reports are separately written to `reports/`; runtime metrics are stored in the metrics SQLite database.
 
 ## Key Features
@@ -1408,3 +1453,70 @@ Both frameworks use an **LLM-as-a-judge** approach and share core RAG metrics, t
 - **Choose Ragas if:** You are focused tightly on a document-heavy RAG architecture, prefer a lightweight, dataset-centric approach for exploration, or want to analyze retrieval-specific performance over time on dashboards.
 - **Choose DeepEval if:** You want developer-grade unit testing integrated directly into `pytest`, need hard quality gates to block broken pull requests in CI/CD, or need to test broader behaviors like safety, bias, toxicity, and multi-agent workflows.
 - **Hybrid Approach:** Many engineering teams **use both together**—leveraging Ragas for deep RAG diagnostic analytics and DeepEval for strict regression testing and CI gates.
+
+## LLMOps: Implementation and Advantages
+
+LLMOps extends this project's LangGraph, Phoenix/OpenTelemetry, and SQLite
+observability with repeatable quality checks and traceable runtime results. It
+currently focuses on the deterministic behavior that can be validated without
+calling a hosted model.
+
+### Implementation in this project
+
+- **Golden evaluation set:** `evals/golden_cases.jsonl` contains 20 examples
+  covering intent routing, project-document retrieval, CRAG routing, and
+  domestic and international site-selection regions.
+- **Versioned quality gates:** `config/prompts_v1.json` records the LLMOps
+  regression thresholds alongside the prompt/config version. The evaluator
+  fails if a measured score falls below its configured threshold.
+- **Offline regression evaluator:** `src/llmops_eval.py` runs deterministic
+  checks for routing accuracy, BM25 source hit rate, site-region defaults, and
+  CRAG threshold decisions. It does not require provider API keys or make
+  model calls.
+- **Phoenix run lineage:** Both graph modes attach the model, prompt version,
+  workflow mode/topology, thread ID, and trace ID to workflow spans. Runtime
+  spans also record the RAG reranker score and diagnostic quality indicators.
+- **Operational metrics and failure feedback:** `data/metrics.sqlite` retains
+  execution metrics with new lineage fields. Failed or interrupted workflows
+  create a PII-redacted candidate in `workflow_failures` for manual review.
+- **CI/CD gate:** `.github/workflows/llmops-regression.yml` runs the focused
+  tests and golden-set threshold checks on relevant pushes and pull requests.
+
+### Advantages for this project
+
+- Catches regressions in RAG routing/retrieval, CRAG behavior, and regional
+  site-selection defaults before merge.
+- Makes workflow traces and local metrics easier to compare across model,
+  prompt/config version, and graph topology.
+- Gives failures a traceable node and trace ID, helping turn recurring issues
+  into reviewed regression examples.
+- Keeps the pull-request gate fast, deterministic, and usable without
+  credentials, external services, or paid LLM-as-a-judge calls.
+- Adds LLMOps capabilities alongside existing Phoenix tracing and app metrics,
+  rather than replacing LangGraph checkpoints or operational dashboards.
+
+### Run the regression checks
+
+```bash
+python -m src.llmops_eval --check
+python -m pytest test/test_llmops.py -q
+```
+
+To send aggregate regression scores to the Phoenix instance already started by
+the app, run:
+
+```bash
+python -m src.llmops_eval --check --phoenix
+```
+
+### Scope and limitations
+
+The current gates are deterministic regression signals, not semantic
+faithfulness or answer-relevance scores. Retrieval scoring uses BM25 over the
+checked-in Markdown corpus; routing, region defaults, and CRAG decisions are
+checked against implemented rules. Runtime answer/context overlap and
+site-report dimension coverage are diagnostic heuristics, not LLM-as-a-judge
+evaluations. The model-backed RAGAS suite in `test/test_evals_ragas.py` remains
+separate and requires the configured providers, services, and local corpus.
+Failure candidates should be reviewed and scrubbed before being added to the
+golden set; the project does not automatically promote runtime inputs.

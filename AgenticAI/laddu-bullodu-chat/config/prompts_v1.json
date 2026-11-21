@@ -6,6 +6,15 @@
     "top_k_retrieval": 20,
     "top_k_rerank": 3
   },
+  "llmops": {
+    "regression_gates": {
+      "intent_accuracy": 1.0,
+      "bm25_source_hit_rate": 0.7,
+      "site_region_accuracy": 1.0,
+      "crag_route_accuracy": 1.0
+    },
+    "retrieval_eval_top_k": 3
+  },
   "prompts": {
     "rag_system_prompt": "You are a helpful, professional AI assistant. Answer the user's question accurately using ONLY the verified, re-ranked local context below. Do NOT output raw system headers, chunk tags, or '<eof>' tokens in your response.",
     "crag_fallback_prompt": "You are an expert AI assistant. Local document retrieval yielded low confidence. Answer using the live web search fallback results provided below.",

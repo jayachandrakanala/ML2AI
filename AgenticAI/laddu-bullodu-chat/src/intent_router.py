@@ -38,7 +38,12 @@ def route_intent(query: str) -> str:
     ]
 
     all_sc_patterns = sc_keywords + graph_entity_keywords + impact_keywords + mitigation_keywords
-    if any(keyword in query_lower for keyword in all_sc_patterns):
+    if any(
+        re.search(r"\bports?\b", query_lower)
+        if keyword == "port"
+        else keyword in query_lower
+        for keyword in all_sc_patterns
+    ):
         return "SUPPLY_CHAIN"
 
     if re.search(r"\bord-\d+\b", query_lower):
@@ -59,11 +64,64 @@ def route_intent(query: str) -> str:
     if any(keyword in query_lower for keyword in web_keywords):
         return "WEB"
         
-    local_keywords = ["laddu", "bullodu", "roadmap", "feature", "architecture", "assistant", "chat", "project", "doc", "document", "author", "phase", "stack", "implementation", "kanala"]
+    local_keywords = [
+        "laddu", "bullodu", "roadmap", "feature", "architecture", "assistant",
+        "chat", "project", "doc", "document", "author", "phase", "stack",
+        "implementation", "kanala", "autonomous multi-agent", "autonomous mode",
+        "agentic workflow", "supervisor", "critic",
+    ]
     if any(keyword in query_lower for keyword in local_keywords):
         return "RAG"
         
     return "LLM"
+
+
+def infer_site_selection_defaults(query: str) -> tuple[str, list[str]]:
+    """Return deterministic country and location defaults for a site query."""
+    query_lower = query.lower()
+
+    if "canada" in query_lower or "canadian" in query_lower:
+        return "Canada", ["Montreal QC", "Toronto ON", "Calgary AB"]
+    if any(w in query_lower for w in ["west indies", "caribbean", "caribbean islands"]):
+        return "Caribbean (West Indies)", [
+            "San Juan Puerto Rico",
+            "Santo Domingo Dominican Republic",
+            "Port of Spain Trinidad and Tobago",
+        ]
+    if any(
+        w in query_lower
+        for w in [
+            "asia",
+            "asian",
+            "singapore",
+            "japan",
+            "tokyo",
+            "india",
+            "mumbai",
+            "seoul",
+            "hong kong",
+            "apac",
+        ]
+    ):
+        return "Asia-Pacific", ["Singapore", "Tokyo Japan", "Mumbai India"]
+    if any(
+        w in query_lower
+        for w in ["dubai", "abu dhabi", "uae", "united arab emirates"]
+    ):
+        if "abu dhabi" in query_lower:
+            locations = ["Abu Dhabi UAE"]
+        elif "dubai" in query_lower:
+            locations = ["Dubai UAE"]
+        else:
+            locations = ["Dubai UAE", "Abu Dhabi UAE"]
+        return "United Arab Emirates", locations
+    if any(
+        w in query_lower
+        for w in ["europe", "uk", "germany", "london", "frankfurt", "dublin", "eu"]
+    ):
+        return "Europe", ["Frankfurt Germany", "London UK", "Dublin Ireland"]
+    return "United States", ["Northern Virginia", "Phoenix AZ", "Columbus OH"]
+
 
 def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tuple:
     """Extract a country and candidate cities, with region-aware defaults as fallback.
@@ -83,33 +141,21 @@ def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tup
     User Query: "{query}"
     """
     
-    query_lower = query.lower()
-    
-    # 1. Determine intelligent defaults based on query content
-    if "canada" in query_lower or "canadian" in query_lower:
-        default_country = "Canada"
-        default_locations = ["Montreal QC", "Toronto ON", "Calgary AB"]
-    elif any(w in query_lower for w in ["west indies", "caribbean", "caribbean islands"]):
-        default_country = "Caribbean (West Indies)"
-        default_locations = [
-            "San Juan Puerto Rico",
-            "Santo Domingo Dominican Republic",
-            "Port of Spain Trinidad and Tobago",
-        ]
+    default_country, default_locations = infer_site_selection_defaults(query)
+
+    if default_country == "Caribbean (West Indies)":
         log_status(
             "Using regional site-selection hubs for the West Indies/Caribbean: "
             + ", ".join(default_locations)
         )
         return default_country, default_locations
-    elif any(w in query_lower for w in ["asia", "asian", "singapore", "japan", "tokyo", "india", "mumbai", "seoul", "hong kong", "apac"]):
-        default_country = "Asia-Pacific"
-        default_locations = ["Singapore", "Tokyo Japan", "Mumbai India"]
-    elif any(w in query_lower for w in ["europe", "uk", "germany", "london", "frankfurt", "dublin", "eu"]):
-        default_country = "Europe"
-        default_locations = ["Frankfurt Germany", "London UK", "Dublin Ireland"]
-    else:
-        default_country = "United States"
-        default_locations = ["Northern Virginia", "Phoenix AZ", "Columbus OH"]
+    if default_country == "United Arab Emirates":
+        log_status(
+            "Using UAE data-center locations: " + ", ".join(default_locations)
+        )
+        return default_country, default_locations
+
+    query_lower = query.lower()
 
     try:
         response = get_chat_model(selected_model).invoke(extraction_prompt)

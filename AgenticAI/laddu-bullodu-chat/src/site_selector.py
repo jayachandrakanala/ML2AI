@@ -3,6 +3,7 @@ from typing import TypedDict, List, Dict, Any, NotRequired
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langgraph.graph import StateGraph, START, END
 from src.logger import log_status
+from src.mlops import set_run_attribute, site_report_dimensions
 from src.llm_provider import OLLAMA_MODEL, get_chat_model
 
 class SiteSelectionState(TypedDict):
@@ -17,9 +18,9 @@ class SiteSelectionState(TypedDict):
     selected_model: NotRequired[str]
 
 def supervisor_agent_node(state: SiteSelectionState):
-    """Gather zoning, power, and tax-incentive search results for each site.
+    """Gather zoning, power, water-supply, and tax research for each site.
 
-    Each location receives three focused Serper searches; the raw results are
+    Each location receives four focused Serper searches; the raw results are
     grouped by location and returned for the evaluator stage.
     """
     country = state["country"]
@@ -30,15 +31,23 @@ def supervisor_agent_node(state: SiteSelectionState):
     serper = GoogleSerperAPIWrapper()
     raw_data = {}
     for loc in locations:
-        log_status(f"🔍 Delegating workers for location: {loc} (Zoning, Power, Financials)...")
+        log_status(
+            f"🔍 Delegating workers for location: {loc} "
+            "(Zoning, Power, Water, Financials)..."
+        )
         
         zoning_res = serper.run(f"commercial real estate zoning environmental regulations data center {loc} {country}")
         power_res = serper.run(f"power grid capacity electricity substation renewable energy data center {loc} {country}")
+        water_res = serper.run(
+            f"data center water supply infrastructure capacity reliability "
+            f"potable water desalination treated wastewater cooling permits {loc} {country}"
+        )
         tax_res = serper.run(f"tax incentives commercial real estate data center tax abatement {loc} {country}")
         
         raw_data[loc] = {
             "zoning": zoning_res,
             "power": power_res,
+            "water_supply": water_res,
             "financials": tax_res
         }
         
@@ -64,16 +73,22 @@ def evaluation_subgraph_node(state: SiteSelectionState):
         
         --- POWER & INFRASTRUCTURE ---
         {data['power']}
+
+        --- WATER SUPPLY & COOLING ---
+        {data['water_supply']}
         
         --- FINANCIALS & INCENTIVES ---
         {data['financials']}
         
         Provide a structured assessment containing:
         1. Power Availability & Reliability (Score out of 10)
-        2. Zoning & Environmental Suitability (Score out of 10)
-        3. Financial Incentives & Tax Abatements (Score out of 10)
-        4. Key Pros (Bulleted list)
-        5. Key Cons / Risks (Bulleted list)
+        2. Water supply availability, source, capacity, reliability, quality, and permits.
+           Assess desalinated municipal supply, reclaimed wastewater, and cooling demand
+           only when supported by the supplied evidence; identify missing data explicitly.
+        3. Zoning & Environmental Suitability (Score out of 10)
+        4. Financial Incentives & Tax Abatements (Score out of 10)
+        5. Key Pros (Bulleted list)
+        6. Key Cons / Risks and evidence gaps (Bulleted list)
         """
         response = get_chat_model(state.get("selected_model", OLLAMA_MODEL)).invoke(prompt)
         evaluations[loc] = response.content
@@ -101,12 +116,22 @@ def synthesis_and_report_node(state: SiteSelectionState):
     
     Your report must include:
     - Executive Summary
-    - Comparative Metrics Table (ranking Power, Zoning, and Financials across locations)
+    - Comparative Metrics Table (ranking Power, Water Supply, Zoning, and Financials across locations)
+    - Water sourcing, capacity and reliability, potable/reclaimed supply options, cooling demand, permitting, and any material evidence gaps for each location
     - Detailed Location Analysis with explicit **Pros** and **Cons** for each site
     - Final Recommendation / Investment Memo conclusion
     """
     
     report_content = get_chat_model(state.get("selected_model", OLLAMA_MODEL)).invoke(synthesis_prompt).content
+    dimensions = site_report_dimensions(report_content)
+    set_run_attribute(
+        "site_selection.dimension_coverage",
+        sum(dimensions.values()) / len(dimensions),
+    )
+    set_run_attribute(
+        "site_selection.missing_dimensions",
+        ",".join(key for key, present in dimensions.items() if not present),
+    )
     
     reports_dir = os.path.join(".", "reports")
     os.makedirs(reports_dir, exist_ok=True)

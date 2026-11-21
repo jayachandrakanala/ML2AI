@@ -8,8 +8,10 @@ class HybridRetriever:
         """Build a BM25 index over lowercased, whitespace-tokenized page content."""
         self.documents = documents
         # Tokenize corpus text for BM25 lexical matching
-        tokenized_corpus = [doc.page_content.lower().split() for doc in documents]
-        self.bm25 = BM25Okapi(tokenized_corpus)
+        self.tokenized_corpus = [
+            doc.page_content.lower().split() for doc in documents
+        ]
+        self.bm25 = BM25Okapi(self.tokenized_corpus)
 
     def bm25_search(self, query: str, k: int = 20) -> list[tuple[Document, float]]:
         """Return up to ``k`` positive-scoring documents in descending BM25 order.
@@ -19,8 +21,19 @@ class HybridRetriever:
         """
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
-        return [(self.documents[i], float(scores[i])) for i in top_indices if scores[i] > 0]
+        query_terms = set(tokenized_query)
+        matching_indices = [
+            index
+            for index, document_terms in enumerate(self.tokenized_corpus)
+            if query_terms.intersection(document_terms)
+        ]
+        top_indices = sorted(
+            matching_indices, key=lambda i: scores[i], reverse=True
+        )[:k]
+        return [
+            (self.documents[i], float(scores[i]))
+            for i in top_indices
+        ]
 
 
 def reciprocal_rank_fusion(

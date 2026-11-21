@@ -1,0 +1,35 @@
+name: LLMOps regression checks
+
+on:
+  pull_request:
+    paths:
+      - "AgenticAI/laddu-bullodu-chat/**"
+      - ".github/workflows/llmops-regression.yml"
+  push:
+    paths:
+      - "AgenticAI/laddu-bullodu-chat/**"
+      - ".github/workflows/llmops-regression.yml"
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: AgenticAI/laddu-bullodu-chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: AgenticAI/laddu-bullodu-chat/requirements.txt
+      - name: Install offline evaluation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest rank-bm25 opentelemetry-api opentelemetry-sdk \
+            langchain-core langchain-google-genai langchain-groq \
+            langchain-ollama langchain-openai python-dotenv
+      - name: Run LLMOps regression tests
+        run: python -m pytest test/test_llmops.py -q
+      - name: Enforce golden-set thresholds
+        run: python -m src.llmops_eval --check

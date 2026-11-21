@@ -15,6 +15,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from src.config_loader import load_version_config
+from src.mlops import crag_fallback_required, set_run_attribute, workflow_span
 from src.logger import set_status_callback
 from src.graph_nodes import (
     router_node,
@@ -51,6 +52,11 @@ class State(TypedDict):
     top_docs: NotRequired[list]
     top_relevance_score: NotRequired[float]
     start_time: NotRequired[float]
+    thread_id: NotRequired[str]
+    trace_id: NotRequired[str]
+    workflow_mode: NotRequired[str]
+    prompt_version: NotRequired[str]
+    graph_topology: NotRequired[str]
 
 def route_after_router(state: State):
     """Send local-document intents to retrieval and all other intents to domain handling."""
@@ -61,7 +67,14 @@ def route_after_rerank(state: State):
 
     A missing relevance score is treated as zero, which routes to the fallback.
     """
-    return "crag_fallback_node" if state.get("top_relevance_score", 0.0) < THRESHOLDS.get("crag_relevance_threshold", 0.4) else "rag_generate_node"
+    return (
+        "crag_fallback_node"
+        if crag_fallback_required(
+            state.get("top_relevance_score", 0.0),
+            THRESHOLDS.get("crag_relevance_threshold", 0.4),
+        )
+        else "rag_generate_node"
+    )
 
 # Assemble the StateGraph Workflow
 workflow = StateGraph(State)
@@ -104,10 +117,19 @@ def stream_graph(state, config, stream_mode="updates"):
     connections across Streamlit execution threads. ``state`` may be ``None``
     when resuming an existing checkpoint; ``config`` supplies the thread ID.
     """
-    with SqliteSaver.from_conn_string(DB_PATH) as session_checkpointer:
-        session_checkpointer.conn.execute("PRAGMA busy_timeout=30000")
-        graph = workflow.compile(checkpointer=session_checkpointer)
-        yield from graph.stream(state, config=config, stream_mode=stream_mode)
+    with workflow_span(state, config, "default"):
+        with SqliteSaver.from_conn_string(DB_PATH) as session_checkpointer:
+            session_checkpointer.conn.execute("PRAGMA busy_timeout=30000")
+            graph = workflow.compile(checkpointer=session_checkpointer)
+            for event in graph.stream(state, config=config, stream_mode=stream_mode):
+                for update in event.values():
+                    if "intent" in update:
+                        set_run_attribute("intent", update["intent"])
+                    if "top_relevance_score" in update:
+                        set_run_attribute(
+                            "rag.reranker_score", update["top_relevance_score"]
+                        )
+                yield event
 
 
 def invoke_graph(state, config):

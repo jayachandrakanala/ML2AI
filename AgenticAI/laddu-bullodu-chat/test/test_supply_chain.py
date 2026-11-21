@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.agent_graph import route_intent, app_graph
+from src.agent_graph import app_graph
+from src.intent_router import route_intent
 from src.supply_chain import supply_chain_graph
 
 # ------------------------------------------------------------------------------
@@ -159,6 +160,25 @@ def test_intent_routing_classification(scenario):
         f"[{scenario['id']}] Failed intent routing for query: '{query}'. "
         f"Got '{intent}' instead of 'SUPPLY_CHAIN'."
     )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_intent"),
+    [
+        (
+            "What is today's weather report in Dubai, and how does autonomous "
+            "multi-agent mode route and review work?",
+            "WEB",
+        ),
+        ("How does autonomous multi-agent mode route and review work?", "RAG"),
+        ("What is the weather in Dubai today?", "WEB"),
+    ],
+)
+def test_intent_routing_avoids_supply_chain_for_weather_and_workflow_questions(
+    query, expected_intent
+):
+    """Keep 'port' in 'report' from sending unrelated questions to Neo4j."""
+    assert route_intent(query) == expected_intent
 
 
 # ------------------------------------------------------------------------------

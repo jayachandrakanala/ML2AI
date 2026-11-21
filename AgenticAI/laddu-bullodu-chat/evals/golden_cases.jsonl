@@ -1,0 +1,20 @@
+{"id":"rag-01","category":"rag","query":"What is the architecture and core capabilities of this assistant?","expected_intent":"RAG","expected_source":"chat_info.md","crag_score":0.8,"expected_crag":false}
+{"id":"rag-02","category":"rag","query":"How does hybrid vector retrieval and BM25 work in this project?","expected_intent":"RAG","expected_source":"chat_info.md","crag_score":0.8,"expected_crag":false}
+{"id":"rag-03","category":"rag","query":"Explain cross-encoder reranking and the CRAG threshold in the project architecture.","expected_intent":"RAG","expected_source":"chat_info.md","crag_score":0.2,"expected_crag":true}
+{"id":"rag-04","category":"rag","query":"What local documents does the autonomous workflow read?","expected_intent":"RAG","expected_sources":["autonomous_workflow.md","chat_assistant_features.md","chat_info.md"],"crag_score":0.8,"expected_crag":false}
+{"id":"rag-05","category":"rag","query":"How does the autonomous supervisor and critic workflow operate in this assistant?","expected_intent":"RAG","expected_sources":["autonomous_workflow.md","chat_assistant_features.md","chat_info.md"],"crag_score":0.8,"expected_crag":false}
+{"id":"rag-06","category":"rag","query":"How are prompts and retrieval thresholds configured in this project?","expected_intent":"RAG","expected_sources":["deep_agents.md","chat_assistant_features.md","chat_info.md"],"crag_score":0.8,"expected_crag":false}
+{"id":"rag-07","category":"rag","query":"What does the assistant's output guardrail sanitize?","expected_intent":"RAG","expected_source":"chat_info.md","crag_score":0.8,"expected_crag":false}
+{"id":"rag-08","category":"rag","query":"Describe how the LangGraph nodes route document questions and web fallback.","expected_intent":"RAG","expected_source":"chat_info.md","crag_score":0.8,"expected_crag":false}
+{"id":"site-canada","category":"site_selection","query":"Compare commercial real estate sites in Canada.","expected_intent":"SITE_SELECTION","expected_region":"Canada"}
+{"id":"site-apac","category":"site_selection","query":"Select a data center site in Asia-Pacific.","expected_intent":"SITE_SELECTION","expected_region":"Asia-Pacific"}
+{"id":"site-europe","category":"site_selection","query":"Compare data center investment locations in Europe.","expected_intent":"SITE_SELECTION","expected_region":"Europe"}
+{"id":"site-uae","category":"site_selection","query":"Evaluate data center options in Abu Dhabi.","expected_intent":"SITE_SELECTION","expected_region":"United Arab Emirates"}
+{"id":"site-caribbean","category":"site_selection","query":"Find commercial real estate locations in the Caribbean.","expected_intent":"SITE_SELECTION","expected_region":"Caribbean (West Indies)"}
+{"id":"site-us","category":"site_selection","query":"Evaluate commercial real estate site options.","expected_intent":"SITE_SELECTION","expected_region":"United States"}
+{"id":"supply-01","category":"supply_chain","query":"Which customer orders are affected by the Port of Los Angeles congestion?","expected_intent":"SUPPLY_CHAIN"}
+{"id":"supply-02","category":"supply_chain","query":"Trace the upstream suppliers for the stalled microcontroller component.","expected_intent":"SUPPLY_CHAIN"}
+{"id":"supply-03","category":"supply_chain","query":"Calculate the revenue at risk from the shipping delay.","expected_intent":"SUPPLY_CHAIN"}
+{"id":"web-01","category":"web","query":"What are the latest developments in AI agents this week?","expected_intent":"WEB"}
+{"id":"web-02","category":"web","query":"What is the weather in Dubai today?","expected_intent":"WEB"}
+{"id":"chat-01","category":"general_chat","query":"Explain the difference between SAML and OIDC authentication.","expected_intent":"LLM"}

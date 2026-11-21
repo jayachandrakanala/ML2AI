@@ -1,4 +1,5 @@
 # src/graph_nodes.py
+import logging
 import os
 import time
 import streamlit as st
@@ -25,6 +26,12 @@ from src.llm_provider import (
     trim_chat_messages,
 )
 from src.metrics_logger import log_execution
+from src.weather import extract_weather_location, get_weather_report
+from src.mlops import (
+    current_trace_id,
+    rag_answer_context_overlap,
+    set_run_attribute,
+)
 
 EMBEDDING_MODEL = "embeddinggemma"
 PERSIST_DIRECTORY = "./chroma_db"
@@ -47,7 +54,7 @@ def estimate_token_cost(model_name: str, text_content: str) -> float:
     return (tokens / 1_000_000) * 0.20   # ~$0.20 per million tokens
 
 @st.cache_resource
-def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
+def _cached_load_embeddings_and_vector_store(use_local_embeddings: bool = False):
     """Load the selected embedding backend and its persistent Chroma collection.
 
     Reads ``.txt`` and ``.md`` files from ``documents/``, sanitizes PII before
@@ -56,12 +63,10 @@ def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
     """
     if use_local_embeddings:
         from src.local_embeddings import LocalEmbeddingGemmaEmbeddings
-        log_status("Loading local Hugging Face EmbeddingGemma model...")
         emb_func = LocalEmbeddingGemmaEmbeddings()
         collection_name = "embeddinggemma_local_v1_guarded_collection"
     else:
         from langchain_ollama import OllamaEmbeddings
-        log_status(f"Initializing Ollama Embeddings model: {EMBEDDING_MODEL}")
         emb_func = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
         collection_name = "embeddinggemma_v3_guarded_collection"
     
@@ -81,8 +86,10 @@ def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
                         sanitized_content = sanitize_text(f.read())
                         doc_id = f"{filename}_{os.path.getmtime(file_path)}"
                         all_docs.append(Document(page_content=sanitized_content, metadata={"source": filename, "id": doc_id}))
-                except Exception as e:
-                    log_status(f"Error reading {filename}: {e}")
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Error reading document %s", filename
+                    )
         
         if all_docs:
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -92,8 +99,21 @@ def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
                 metadatas=[d.metadata for d in split_docs],
                 ids=[f"{d.metadata['source']}_{i}" for i, d in enumerate(split_docs)]
             )
-            log_status("Successfully upserted guarded chunks into vector store.")
     return vector_store
+
+
+def load_embeddings_and_vector_store(use_local_embeddings: bool = False):
+    """Report preparation outside Streamlit's cache, then return the cached store."""
+    backend = (
+        "local Hugging Face EmbeddingGemma"
+        if use_local_embeddings
+        else f"Ollama {EMBEDDING_MODEL}"
+    )
+    log_status(f"Preparing {backend} embeddings and vector store...")
+    vector_store = _cached_load_embeddings_and_vector_store(use_local_embeddings)
+    log_status("Vector store is ready.")
+    return vector_store
+
 
 _hybrid_retriever = None
 
@@ -129,6 +149,7 @@ def router_node(state: dict):
             latest_query = msg.content.strip() if hasattr(msg, "content") else msg.get("content", "").strip()
             break
     state["intent"] = route_intent(latest_query)
+    set_run_attribute("intent", state["intent"])
     log_status(f"Router classified intent as: {state['intent']}")
     return state
 
@@ -167,6 +188,8 @@ def rerank_node(state: dict):
     top_docs, top_score = rerank_documents(latest_query, raw_docs, top_k=THRESHOLDS.get("top_k_rerank", 3))
     state["top_docs"] = top_docs
     state["top_relevance_score"] = top_score
+    set_run_attribute("rag.reranker_score", top_score)
+    set_run_attribute("rag.retrieved_context_count", len(top_docs))
     return state
 
 def domain_executor_node(state: dict):
@@ -192,6 +215,11 @@ def domain_executor_node(state: dict):
         response_content = f"### 🏢 Site Selection Report\n\n{result['comparison_report']}\n\n---\n*📁 Saved to: `{result['report_filepath']}`*"
         badge = "[SITE SELECTION]"
     elif intent == "WEB":
+        if "weather" in latest_query.lower() or "temperature" in latest_query.lower():
+            location = extract_weather_location(latest_query)
+            response_content = get_weather_report(location)
+            state["messages"].append(AIMessage(content=f"[WEB] {response_content}"))
+            return state
         try:
             web_results = serper_search.run(latest_query)
         except Exception as e:
@@ -274,7 +302,17 @@ def output_guardrail_node(state: dict):
                 badge = prefix
                 content_str = content_str[len(prefix):].strip()
                 break
-        last_msg.content = f"{badge} {sanitize_text(content_str)}".strip()
+        safe_content = sanitize_text(content_str)
+        last_msg.content = f"{badge} {safe_content}".strip()
+        if state.get("intent") == "RAG":
+            contexts = [
+                doc.page_content for doc in state.get("top_docs", [])
+            ]
+            set_run_attribute(
+                "rag.answer_context_token_overlap",
+                rag_answer_context_overlap(safe_content, contexts),
+            )
+            set_run_attribute("rag.quality_metric_kind", "lexical_heuristic")
 
     # Calculate operational telemetry
     start_time = state.get("start_time", time.time())
@@ -293,7 +331,12 @@ def output_guardrail_node(state: dict):
             latency_seconds=latency,
             token_cost=token_cost,
             citation_mode=badge,
-            status="SUCCESS"
+            status="SUCCESS",
+            model_name=selected_model,
+            prompt_version=state.get("prompt_version", CONFIG.get("version")),
+            workflow_mode=state.get("workflow_mode", "default"),
+            graph_topology=state.get("graph_topology", "intent-routed-v1"),
+            trace_id=state.get("trace_id") or current_trace_id(),
         )
     except Exception as e:
         log_status(f"Metrics logging warning: {e}")

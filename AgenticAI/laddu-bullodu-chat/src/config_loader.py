@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-CONFIG_PATH = Path("./config/prompts_v1.json")
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "prompts_v1.json"
 
 def load_version_config() -> dict:
     """Load prompts and thresholds from ``config/prompts_v1.json`` or use built-in defaults.

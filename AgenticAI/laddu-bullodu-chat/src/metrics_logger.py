@@ -9,37 +9,165 @@ Path(METRICS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 def init_metrics_db():
     """Create the metrics database directory and execution-log table if needed."""
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS execution_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            thread_id TEXT,
-            timestamp REAL,
-            intent TEXT,
-            latency_seconds REAL,
-            token_cost REAL,
-            citation_mode TEXT,
-            status TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS execution_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT,
+                timestamp REAL,
+                intent TEXT,
+                latency_seconds REAL,
+                token_cost REAL,
+                citation_mode TEXT,
+                status TEXT,
+                model_name TEXT,
+                prompt_version TEXT,
+                workflow_mode TEXT,
+                graph_topology TEXT,
+                trace_id TEXT
+            )
+        """)
+        existing_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(execution_logs)")
+        }
+        for column in (
+            "model_name",
+            "prompt_version",
+            "workflow_mode",
+            "graph_topology",
+            "trace_id",
+        ):
+            if column not in existing_columns:
+                cursor.execute(f"ALTER TABLE execution_logs ADD COLUMN {column} TEXT")
 
-def log_execution(thread_id: str, intent: str, latency_seconds: float, token_cost: float, citation_mode: str, status: str = "SUCCESS"):
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT,
+                timestamp REAL,
+                query TEXT,
+                failed_node TEXT,
+                error_type TEXT,
+                model_name TEXT,
+                prompt_version TEXT,
+                workflow_mode TEXT,
+                graph_topology TEXT,
+                trace_id TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_execution(
+    thread_id: str,
+    intent: str,
+    latency_seconds: float,
+    token_cost: float,
+    citation_mode: str,
+    status: str = "SUCCESS",
+    model_name: str | None = None,
+    prompt_version: str | None = None,
+    workflow_mode: str | None = None,
+    graph_topology: str | None = None,
+    trace_id: str | None = None,
+):
     """Append one completed workflow turn and its operational measurements to SQLite.
 
     ``token_cost`` is the application's estimate; ``citation_mode`` stores the
-    response badge/path used for the turn.
+    response badge/path used for the turn. Lineage fields are optional for
+    compatibility with non-UI callers.
     """
     init_metrics_db()
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO execution_logs (thread_id, timestamp, intent, latency_seconds, token_cost, citation_mode, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (thread_id, time.time(), intent, latency_seconds, token_cost, citation_mode, status))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT INTO execution_logs (
+                thread_id, timestamp, intent, latency_seconds, token_cost,
+                citation_mode, status, model_name, prompt_version,
+                workflow_mode, graph_topology, trace_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            thread_id,
+            time.time(),
+            intent,
+            latency_seconds,
+            token_cost,
+            citation_mode,
+            status,
+            model_name,
+            prompt_version,
+            workflow_mode,
+            graph_topology,
+            trace_id,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_workflow_failure(
+    thread_id: str,
+    query: str,
+    failed_node: str,
+    error_type: str,
+    model_name: str,
+    prompt_version: str,
+    workflow_mode: str,
+    graph_topology: str,
+    trace_id: str | None,
+    intent: str = "UNKNOWN",
+) -> None:
+    """Persist a PII-redacted failure candidate and count it in reliability metrics."""
+    init_metrics_db()
+    conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
+    timestamp = time.time()
+    try:
+        conn.execute("""
+            INSERT INTO workflow_failures (
+                thread_id, timestamp, query, failed_node, error_type,
+                model_name, prompt_version, workflow_mode, graph_topology, trace_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            thread_id,
+            timestamp,
+            query,
+            failed_node,
+            error_type,
+            model_name,
+            prompt_version,
+            workflow_mode,
+            graph_topology,
+            trace_id,
+        ))
+        conn.execute("""
+            INSERT INTO execution_logs (
+                thread_id, timestamp, intent, latency_seconds, token_cost,
+                citation_mode, status, model_name, prompt_version,
+                workflow_mode, graph_topology, trace_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            thread_id,
+            timestamp,
+            intent,
+            0.0,
+            0.0,
+            "FAILED",
+            "FAILED",
+            model_name,
+            prompt_version,
+            workflow_mode,
+            graph_topology,
+            trace_id,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
 
 def get_metrics_summary() -> dict:
     """Aggregate all stored executions into latency, estimated cost, failure, and badge metrics.
