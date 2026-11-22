@@ -22,6 +22,10 @@ from phoenix.otel import register
 from openinference.instrumentation.langchain import LangChainInstrumentor
 
 
+# Function: init_telemetry
+# Purpose: Start the persistent Phoenix trace server and instrument LangChain calls. Streamlit caches the
+# tracer provider as a resource. A startup/instrumentation failure returns ``None`` so the chat app
+# remains usable without telemetry.
 @st.cache_resource
 def init_telemetry():
     """Start the persistent Phoenix trace server and instrument LangChain calls.

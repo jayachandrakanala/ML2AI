@@ -30,6 +30,11 @@ MODEL_LABELS = {
 }
 
 
+# Function: trim_chat_messages
+# Purpose: Prioritize system instructions and recent conversation within a character budget. System content is
+# retained first and truncated when necessary. Remaining messages are considered newest-first; the
+# newest message is kept even if it alone exceeds the remaining budget. Supports both LangChain
+# messages and role/content dictionaries.
 def trim_chat_messages(messages: list, max_chars: int = 16000) -> list:
     """Prioritize system instructions and recent conversation within a character budget.
 
@@ -73,6 +78,10 @@ def trim_chat_messages(messages: list, max_chars: int = 16000) -> list:
     return bounded_system_messages + list(reversed(selected))
 
 
+# Function: get_chat_model
+# Purpose: Return a cached chat client for a configured model or provider route. Cloud providers require their
+# respective API-key environment variables. OpenRouter's free route chooses an available free model
+# dynamically. Unknown names and missing credentials raise ``ValueError``.
 @lru_cache(maxsize=8)
 def get_chat_model(model_name: str = OLLAMA_MODEL):
     """Return a cached chat client for a configured model or provider route.

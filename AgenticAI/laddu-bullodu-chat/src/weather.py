@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 
+# Function: extract_weather_location
+# Purpose: Extract the location following weather/forecast or temperature wording.
 def extract_weather_location(query: str) -> str:
     """Extract the location following weather/forecast or temperature wording."""
     match = re.search(
@@ -23,6 +25,8 @@ def extract_weather_location(query: str) -> str:
     return match.group(1).strip()
 
 
+# Function: _get_json
+# Purpose: Fetch and decode a JSON response with a bounded network timeout.
 def _get_json(url: str) -> dict:
     """Fetch and decode a JSON response with a bounded network timeout."""
     try:
@@ -32,6 +36,8 @@ def _get_json(url: str) -> dict:
         raise RuntimeError(f"Weather service request failed: {error}") from error
 
 
+# Function: get_weather_report
+# Purpose: Return observed conditions and today's forecast in the location's timezone.
 def get_weather_report(location: str) -> str:
     """Return observed conditions and today's forecast in the location's timezone."""
     geocode_url = "https://geocoding-api.open-meteo.com/v1/search?" + urlencode(

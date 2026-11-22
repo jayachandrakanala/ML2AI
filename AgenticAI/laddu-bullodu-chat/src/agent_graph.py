@@ -15,7 +15,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from src.config_loader import load_version_config
-from src.mlops import crag_fallback_required, set_run_attribute, workflow_span
+from src.llmops import crag_fallback_required, set_run_attribute, workflow_span
 from src.logger import set_status_callback
 from src.graph_nodes import (
     router_node,
@@ -30,6 +30,10 @@ from src.graph_nodes import (
 CONFIG = load_version_config()
 THRESHOLDS = CONFIG["thresholds"]
 
+# Function: add_bounded_messages
+# Purpose: Merge LangGraph message updates and retain the latest 12 conversation entries. This function is the
+# reducer for ``State.messages``; LangGraph calls it when nodes return message updates, so the bound
+# applies across graph transitions.
 def add_bounded_messages(existing: list, new_messages: list) -> list:
     """Merge LangGraph message updates and retain the latest 12 conversation entries.
 
@@ -39,6 +43,10 @@ def add_bounded_messages(existing: list, new_messages: list) -> list:
     merged = add_messages(existing, new_messages)
     return merged[-12:]
 
+# Class: State
+# Purpose: Shared data contract for the assistant graph's nodes. ``messages`` is accumulated through
+# ``add_bounded_messages``. Other keys are optional because only nodes on the selected intent path
+# populate them.
 class State(TypedDict):
     """Shared data contract for the assistant graph's nodes.
 
@@ -58,10 +66,15 @@ class State(TypedDict):
     prompt_version: NotRequired[str]
     graph_topology: NotRequired[str]
 
+# Function: route_after_router
+# Purpose: Send local-document intents to retrieval and all other intents to domain handling.
 def route_after_router(state: State):
     """Send local-document intents to retrieval and all other intents to domain handling."""
     return "retrieve_node" if state.get("intent", "LLM") == "RAG" else "domain_executor_node"
 
+# Function: route_after_rerank
+# Purpose: Choose local RAG generation or web fallback using the configured CRAG score threshold. A missing
+# relevance score is treated as zero, which routes to the fallback.
 def route_after_rerank(state: State):
     """Choose local RAG generation or web fallback using the configured CRAG score threshold.
 
@@ -77,6 +90,8 @@ def route_after_rerank(state: State):
     )
 
 # Assemble the StateGraph Workflow
+# The graph has one START entry, a router, specialist retrieval/domain paths,
+# RAG or CRAG generation, and a shared guardrail that leads to END.
 workflow = StateGraph(State)
 
 workflow.add_node("router_agent", router_node)
@@ -100,6 +115,8 @@ workflow.add_edge("guardrail", END)
 # ------------------------------------------------------------------------------
 # Persistent SQLite Database Checkpointer Setup
 # ------------------------------------------------------------------------------
+# Checkpoint writes allow an interrupted browser session to resume from the
+# next incomplete LangGraph node instead of restarting the full conversation.
 DB_PATH = "./checkpoints.sqlite"
 db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 db_conn.execute("PRAGMA journal_mode=WAL")
@@ -110,6 +127,11 @@ sqlite_checkpointer = SqliteSaver(db_conn)
 app_graph = workflow.compile(checkpointer=sqlite_checkpointer)
 
 
+# Function: stream_graph
+# Purpose: Yield LangGraph updates while owning a short-lived SQLite checkpointer connection. A fresh
+# connection is opened for each invocation to avoid sharing SQLite connections across Streamlit
+# execution threads. ``state`` may be ``None`` when resuming an existing checkpoint; ``config``
+# supplies the thread ID.
 def stream_graph(state, config, stream_mode="updates"):
     """Yield LangGraph updates while owning a short-lived SQLite checkpointer connection.
 
@@ -132,6 +154,9 @@ def stream_graph(state, config, stream_mode="updates"):
                 yield event
 
 
+# Function: invoke_graph
+# Purpose: Run the graph to completion with a short-lived, thread-owned checkpoint connection. The returned
+# value is the final graph state; ``config`` identifies the checkpoint thread to continue or create.
 def invoke_graph(state, config):
     """Run the graph to completion with a short-lived, thread-owned checkpoint connection.
 
@@ -144,6 +169,10 @@ def invoke_graph(state, config):
         return graph.invoke(state, config=config)
 
 
+# Function: get_latest_thread_state
+# Purpose: Read the saved LangGraph state for one browser thread using an isolated connection. The graph is
+# compiled against the same SQLite checkpoint database used by streaming and invocation, allowing the
+# UI to detect and resume interruptions.
 def get_latest_thread_state(thread_id: str):
     """Read the saved LangGraph state for one browser thread using an isolated connection.
 

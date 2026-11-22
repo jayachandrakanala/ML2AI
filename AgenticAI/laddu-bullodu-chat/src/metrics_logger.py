@@ -6,6 +6,8 @@ from pathlib import Path
 METRICS_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "metrics.sqlite")
 Path(METRICS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
+# Function: init_metrics_db
+# Purpose: Create the metrics database directory and execution-log table if needed.
 def init_metrics_db():
     """Create the metrics database directory and execution-log table if needed."""
     conn = sqlite3.connect(METRICS_DB_PATH, check_same_thread=False)
@@ -61,6 +63,10 @@ def init_metrics_db():
         conn.close()
 
 
+# Function: log_execution
+# Purpose: Append one completed workflow turn and its operational measurements to SQLite. ``token_cost`` is the
+# application's estimate; ``citation_mode`` stores the response badge/path used for the turn. Lineage
+# fields are optional for compatibility with non-UI callers.
 def log_execution(
     thread_id: str,
     intent: str,
@@ -109,6 +115,8 @@ def log_execution(
         conn.close()
 
 
+# Function: log_workflow_failure
+# Purpose: Persist a PII-redacted failure candidate and count it in reliability metrics.
 def log_workflow_failure(
     thread_id: str,
     query: str,
@@ -169,6 +177,10 @@ def log_workflow_failure(
     finally:
         conn.close()
 
+# Function: get_metrics_summary
+# Purpose: Aggregate all stored executions into latency, estimated cost, failure, and badge metrics. Latency
+# percentiles are selected from sorted successful-turn samples; cost, request count, and failure rate
+# include all logged rows. An empty database returns zero values and an empty citation-count mapping.
 def get_metrics_summary() -> dict:
     """Aggregate all stored executions into latency, estimated cost, failure, and badge metrics.
 

@@ -18,3 +18,5 @@
 {"id":"web-01","category":"web","query":"What are the latest developments in AI agents this week?","expected_intent":"WEB"}
 {"id":"web-02","category":"web","query":"What is the weather in Dubai today?","expected_intent":"WEB"}
 {"id":"chat-01","category":"general_chat","query":"Explain the difference between SAML and OIDC authentication.","expected_intent":"LLM"}
+{"id":"doc-index-01","category":"document_index","query":"What documents are available in the local document index?","expected_intent":"RAG","expected_source":"index.md","crag_score":0.8,"expected_crag":false}
+{"id":"doc-index-02","category":"document_index","query":"Summarize the source described in RAG and Vector Database.pdf.","expected_intent":"RAG","expected_source":"index.md","crag_score":0.8,"expected_crag":false}

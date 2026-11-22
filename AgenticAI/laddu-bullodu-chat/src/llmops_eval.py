@@ -9,12 +9,14 @@ from langchain_core.documents import Document
 
 from src.hybrid_search import HybridRetriever
 from src.intent_router import infer_site_selection_defaults, route_intent
-from src.mlops import crag_fallback_required
+from src.llmops import crag_fallback_required
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_SET_PATH = PROJECT_ROOT / "evals" / "golden_cases.jsonl"
 
 
+# Function: load_golden_cases
+# Purpose: Load and minimally validate the JSONL regression dataset.
 def load_golden_cases(path: Path = GOLDEN_SET_PATH) -> list[dict[str, Any]]:
     """Load and minimally validate the JSONL regression dataset."""
     cases = []
@@ -49,6 +51,8 @@ def load_golden_cases(path: Path = GOLDEN_SET_PATH) -> list[dict[str, Any]]:
     return cases
 
 
+# Function: _load_document_corpus
+# Purpose: Implement the _load_document_corpus block used by this application workflow.
 def _load_document_corpus() -> list[Document]:
     documents = []
     for path in sorted((PROJECT_ROOT / "documents").glob("*.md")):
@@ -63,6 +67,8 @@ def _load_document_corpus() -> list[Document]:
     return documents
 
 
+# Function: _load_eval_config
+# Purpose: Implement the _load_eval_config block used by this application workflow.
 def _load_eval_config() -> dict[str, Any]:
     path = PROJECT_ROOT / "config" / "prompts_v1.json"
     configuration = json.loads(path.read_text(encoding="utf-8"))
@@ -71,6 +77,10 @@ def _load_eval_config() -> dict[str, Any]:
     return configuration
 
 
+# Function: evaluate_golden_cases
+# Purpose: Score deterministic routing, BM25 source hits, regions, and CRAG decisions. These checks do not call
+# a model. They are regression signals for system behavior, not substitutes for RAGAS or human
+# semantic-quality evaluation.
 def evaluate_golden_cases(
     cases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -79,6 +89,8 @@ def evaluate_golden_cases(
     These checks do not call a model. They are regression signals for system
     behavior, not substitutes for RAGAS or human semantic-quality evaluation.
     """
+    # Each case contributes independent routing, region, and CRAG signals.
+    # Retrieval cases are evaluated separately by BM25 source hit rate.
     cases = cases if cases is not None else load_golden_cases()
     configuration = _load_eval_config()
     expected_sources = [
@@ -133,6 +145,9 @@ def evaluate_golden_cases(
 
     retrieval_matches = []
     if expected_sources:
+        # Construct one in-memory BM25 index from the checked-in Markdown
+        # documents. This measures whether the golden query can retrieve a
+        # relevant source without requiring an API key or hosted model.
         retriever = HybridRetriever(_load_document_corpus())
         top_k = configuration.get("llmops", {}).get("retrieval_eval_top_k", 3)
         for case in expected_sources:
@@ -151,6 +166,8 @@ def evaluate_golden_cases(
                     "actual": actual_sources,
                 })
 
+    # Function: ratio
+    # Purpose: Implement the ratio block used by this application workflow.
     def ratio(matches: list[bool]) -> float:
         return sum(matches) / len(matches) if matches else 0.0
 
@@ -194,6 +211,8 @@ def evaluate_golden_cases(
     }
 
 
+# Function: send_scores_to_phoenix
+# Purpose: Export aggregate golden-set scores to the local Phoenix project.
 def send_scores_to_phoenix(result: dict[str, Any]) -> None:
     """Export aggregate golden-set scores to the local Phoenix project."""
     from opentelemetry import trace
@@ -223,6 +242,8 @@ def send_scores_to_phoenix(result: dict[str, Any]) -> None:
         raise RuntimeError("Phoenix did not confirm export of evaluation scores.")
 
 
+# Function: main
+# Purpose: Implement the main block used by this application workflow.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

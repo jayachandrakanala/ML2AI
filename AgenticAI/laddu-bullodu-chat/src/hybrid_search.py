@@ -2,8 +2,12 @@
 from rank_bm25 import BM25Okapi
 from langchain_core.documents import Document
 
+# Class: HybridRetriever
+# Purpose: Manages lexical BM25 indexing over project documentation chunks.
 class HybridRetriever:
     """Manages lexical BM25 indexing over project documentation chunks."""
+    # Function: __init__
+    # Purpose: Build a BM25 index over lowercased, whitespace-tokenized page content.
     def __init__(self, documents: list[Document]):
         """Build a BM25 index over lowercased, whitespace-tokenized page content."""
         self.documents = documents
@@ -13,6 +17,10 @@ class HybridRetriever:
         ]
         self.bm25 = BM25Okapi(self.tokenized_corpus)
 
+    # Function: bm25_search
+    # Purpose: Return up to ``k`` positive-scoring documents in descending BM25 order. Scores are the raw BM25
+    # values and are not directly comparable to dense vector similarity scores; fusion uses each result's
+    # rank instead.
     def bm25_search(self, query: str, k: int = 20) -> list[tuple[Document, float]]:
         """Return up to ``k`` positive-scoring documents in descending BM25 order.
 
@@ -36,6 +44,11 @@ class HybridRetriever:
         ]
 
 
+# Function: reciprocal_rank_fusion
+# Purpose: Merge dense and BM25 rankings using Reciprocal Rank Fusion. Each appearance contributes ``1 / (k +
+# rank)`` with one-based ranks. The first 150 characters of page content identify a document across
+# result lists, so chunks sharing that prefix are treated as the same item. Return at most ``top_k``
+# unique documents in descending combined score order.
 def reciprocal_rank_fusion(
     dense_results: list[Document], 
     bm25_results: list[tuple[Document, float]], 

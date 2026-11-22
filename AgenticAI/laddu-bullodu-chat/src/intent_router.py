@@ -4,6 +4,11 @@ import json
 from src.logger import log_status
 from src.llm_provider import GROQ_MODEL, get_chat_model
 
+# Function: route_intent
+# Purpose: Classify a query into a workflow intent using ordered keyword heuristics. Supply-chain checks run
+# first, followed by site selection, web search, and local-document RAG; unmatched queries use direct
+# LLM handling. Because matching is substring-based, add specific phrases carefully to avoid changing
+# routing precedence for existing queries.
 def route_intent(query: str) -> str:
     """Classify a query into a workflow intent using ordered keyword heuristics.
 
@@ -69,6 +74,14 @@ def route_intent(query: str) -> str:
         "chat", "project", "doc", "document", "author", "phase", "stack",
         "implementation", "kanala", "autonomous multi-agent", "autonomous mode",
         "agentic workflow", "supervisor", "critic",
+        "document index", "index.md", "document catalog", "available documents",
+        "list documents", "which documents", "local reference", "pdf",
+        "chat_info.md", "chat_assistant_features.md", "autonomous_workflow.md",
+        "deep_agents.md", "ai guardrail", "ai interview", "ai system design",
+        "agent to agent", "agentic ai", "agents intelligence", "artificial intelligence",
+        "crew ai", "gen ai interview", "llms", "lamaindex", "llamaindex",
+        "model context protocol", "multi agent", "n8n", "rag interview",
+        "rag project structure", "rag and vector", "rag.pdf",
     ]
     if any(keyword in query_lower for keyword in local_keywords):
         return "RAG"
@@ -76,6 +89,8 @@ def route_intent(query: str) -> str:
     return "LLM"
 
 
+# Function: infer_site_selection_defaults
+# Purpose: Return deterministic country and location defaults for a site query.
 def infer_site_selection_defaults(query: str) -> tuple[str, list[str]]:
     """Return deterministic country and location defaults for a site query."""
     query_lower = query.lower()
@@ -123,6 +138,11 @@ def infer_site_selection_defaults(query: str) -> tuple[str, list[str]]:
     return "United States", ["Northern Virginia", "Phoenix AZ", "Columbus OH"]
 
 
+# Function: extract_site_parameters
+# Purpose: Extract a country and candidate cities, with region-aware defaults as fallback. The selected model
+# is asked for JSON containing ``country`` and ``locations``. International-region defaults override
+# accidental US-city results; missing, invalid, or failed model output falls back to the inferred
+# regional defaults.
 def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tuple:
     """Extract a country and candidate cities, with region-aware defaults as fallback.
 
@@ -130,7 +150,6 @@ def extract_site_parameters(query: str, selected_model: str = GROQ_MODEL) -> tup
     International-region defaults override accidental US-city results; missing,
     invalid, or failed model output falls back to the inferred regional defaults.
     """
-    log_status("Analyzing user query for site selection parameters...")
     extraction_prompt = f"""
     You are a precise data extraction assistant for commercial real estate and data center site selection.
     Analyze the user query below and extract:

@@ -9,16 +9,23 @@ from sentence_transformers import SentenceTransformer
 _model_lock = threading.Lock()
 
 
+# Class: LocalEmbeddingGemmaEmbeddings
+# Purpose: Generate EmbeddingGemma vectors locally with Sentence Transformers.
 class LocalEmbeddingGemmaEmbeddings(Embeddings):
     """Generate EmbeddingGemma vectors locally with Sentence Transformers."""
 
     MODEL_NAME = "unsloth/embeddinggemma-300m"
 
+    # Function: __init__
+    # Purpose: Load the shared CPU SentenceTransformer model under a process lock.
     def __init__(self) -> None:
         """Load the shared CPU SentenceTransformer model under a process lock."""
         with _model_lock:
             self.model = SentenceTransformer(self.MODEL_NAME, device="cpu")
 
+    # Function: embed_documents
+    # Purpose: Encode document passages with the model's ``passage:`` task prefix. Returned vectors are
+    # L2-normalized and converted to regular Python lists to satisfy LangChain's ``Embeddings`` interface.
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Encode document passages with the model's ``passage:`` task prefix.
 
@@ -34,6 +41,10 @@ class LocalEmbeddingGemmaEmbeddings(Embeddings):
         )
         return vectors.tolist()
 
+    # Function: embed_query
+    # Purpose: Encode one retrieval query with the model's ``query:`` task prefix. The vector is L2-normalized and
+    # returned as a Python list, matching the document-embedding representation used by the local Chroma
+    # collection.
     def embed_query(self, text: str) -> list[float]:
         """Encode one retrieval query with the model's ``query:`` task prefix.
 

@@ -24,13 +24,15 @@ from src.graph_nodes import (
 from src.guardrails import sanitize_text
 from src.llm_provider import GROQ_MODEL, OLLAMA_MODEL, get_chat_model, trim_chat_messages
 from src.logger import log_status
-from src.mlops import set_run_attribute, workflow_span
+from src.llmops import set_run_attribute, workflow_span
 
 AUTONOMOUS_DB_PATH = "./checkpoints_autonomous.sqlite"
 MAX_WORKER_ROUNDS = 4
 MAX_SUPERVISOR_TURNS = MAX_WORKER_ROUNDS + 1
 
 
+# Class: AutonomousState
+# Purpose: Data shared by the autonomous supervisor, specialists, critic, and finalizer.
 class AutonomousState(TypedDict):
     """Data shared by the autonomous supervisor, specialists, critic, and finalizer."""
 
@@ -79,6 +81,8 @@ WORKER_DESCRIPTIONS = {
 }
 
 
+# Function: _latest_user_query
+# Purpose: Return the most recent user message, supporting LangChain messages and tuples.
 def _latest_user_query(messages: list) -> str:
     """Return the most recent user message, supporting LangChain messages and tuples."""
     for message in reversed(messages):
@@ -92,10 +96,38 @@ def _latest_user_query(messages: list) -> str:
     raise ValueError("Autonomous workflow requires at least one user message.")
 
 
+# Function: _required_specialist_tasks
+# Purpose: Return specialists required to cover explicit live-data and project questions.
 def _required_specialist_tasks(goal: str) -> list[tuple[str, str]]:
     """Return specialists required to cover explicit live-data and project questions."""
     normalized_goal = goal.lower()
     tasks = []
+
+    document_index_requested = any(
+        phrase in normalized_goal
+        for phrase in (
+            "document index",
+            "index.md",
+            "document catalog",
+            "available documents",
+            "list documents",
+            "which documents",
+            "local reference documents",
+            "chat_info.md",
+            "chat_assistant_features.md",
+            "autonomous_workflow.md",
+            "deep_agents.md",
+        )
+    )
+    if document_index_requested:
+        tasks.append(
+            (
+                "delegate_to_project_docs",
+                "Use the local document index and project documentation to answer "
+                "which checked-in sources are available and summarize only the "
+                "information listed in those sources.",
+            )
+        )
 
     if "weather" in normalized_goal or "temperature" in normalized_goal:
         tasks.append(
@@ -168,6 +200,8 @@ def _required_specialist_tasks(goal: str) -> list[tuple[str, str]]:
     return tasks
 
 
+# Function: _pending_required_specialist
+# Purpose: Find the first mandatory specialist not yet represented in the findings.
 def _pending_required_specialist(state: AutonomousState) -> tuple[str, str] | None:
     """Find the first mandatory specialist not yet represented in the findings."""
     completed_agents = {
@@ -179,6 +213,8 @@ def _pending_required_specialist(state: AutonomousState) -> tuple[str, str] | No
     return None
 
 
+# Function: _run_rag_worker
+# Purpose: Run the existing hybrid retrieval, reranking, and CRAG/RAG generation path.
 def _run_rag_worker(query: str, selected_model: str) -> str:
     """Run the existing hybrid retrieval, reranking, and CRAG/RAG generation path."""
     state = {
@@ -196,10 +232,12 @@ def _run_rag_worker(query: str, selected_model: str) -> str:
     return str(state["messages"][-1].content)
 
 
+# Function: _run_project_docs_worker
+# Purpose: Return checked-in feature/workflow documents as direct local evidence.
 def _run_project_docs_worker(query: str) -> str:
     """Return checked-in feature/workflow documents as direct local evidence."""
     documents_dir = Path(__file__).resolve().parent.parent / "documents"
-    requested_docs = ["chat_assistant_features.md"]
+    requested_docs = ["index.md", "chat_assistant_features.md"]
     if any(
         phrase in query.lower()
         for phrase in ("autonomous", "multi-agent", "supervisor", "critic", "workflow")
@@ -218,6 +256,8 @@ def _run_project_docs_worker(query: str) -> str:
     return "\n\n".join(documents)
 
 
+# Function: _run_domain_worker
+# Purpose: Execute an existing domain workflow with an explicit supervisor-selected intent.
 def _run_domain_worker(intent: str, query: str, selected_model: str) -> str:
     """Execute an existing domain workflow with an explicit supervisor-selected intent."""
     state = {
@@ -229,21 +269,33 @@ def _run_domain_worker(intent: str, query: str, selected_model: str) -> str:
     return str(result["messages"][-1].content)
 
 
+# Function: _build_worker_tools
+# Purpose: Build model-visible delegation tools bound to the current chat model choice.
 def _build_worker_tools(selected_model: str) -> tuple[list[StructuredTool], dict[str, StructuredTool]]:
     """Build model-visible delegation tools bound to the current chat model choice."""
 
+    # Function: run_rag
+    # Purpose: Implement the run_rag block used by this application workflow.
     def run_rag(query: str) -> str:
         return _run_rag_worker(query, selected_model)
 
+    # Function: run_project_docs
+    # Purpose: Implement the run_project_docs block used by this application workflow.
     def run_project_docs(query: str) -> str:
         return _run_project_docs_worker(query)
 
+    # Function: run_web_search
+    # Purpose: Implement the run_web_search block used by this application workflow.
     def run_web_search(query: str) -> str:
         return _run_domain_worker("WEB", query, selected_model)
 
+    # Function: run_supply_chain
+    # Purpose: Implement the run_supply_chain block used by this application workflow.
     def run_supply_chain(query: str) -> str:
         return _run_domain_worker("SUPPLY_CHAIN", query, selected_model)
 
+    # Function: run_site_selection
+    # Purpose: Implement the run_site_selection block used by this application workflow.
     def run_site_selection(query: str) -> str:
         return _run_domain_worker("SITE_SELECTION", query, selected_model)
 
@@ -263,6 +315,8 @@ def _build_worker_tools(selected_model: str) -> tuple[list[StructuredTool], dict
         for name, description in WORKER_DESCRIPTIONS.items()
     ]
 
+    # Function: finish_task
+    # Purpose: Implement the finish_task block used by this application workflow.
     def finish_task(answer: str) -> str:
         return answer
 
@@ -280,6 +334,8 @@ def _build_worker_tools(selected_model: str) -> tuple[list[StructuredTool], dict
     return tools, {tool.name: tool for tool in tools}
 
 
+# Function: initialize_autonomous_run
+# Purpose: Initialize per-turn goal, counters, findings, and latency tracking.
 def initialize_autonomous_run(state: AutonomousState) -> dict:
     """Initialize per-turn goal, counters, findings, and latency tracking."""
     from time import time
@@ -297,12 +353,20 @@ def initialize_autonomous_run(state: AutonomousState) -> dict:
     }
 
 
+# Function: supervisor_node
+# Purpose: Ask the selected model to delegate one subtask or finish using a tool call. The supervisor sees the
+# original goal, bounded prior worker findings, and critic feedback. Specialist execution is capped to
+# prevent unbounded loops.
 def supervisor_node(state: AutonomousState) -> dict:
     """Ask the selected model to delegate one subtask or finish using a tool call.
 
     The supervisor sees the original goal, bounded prior worker findings, and
     critic feedback. Specialist execution is capped to prevent unbounded loops.
     """
+    # Routing priority is:
+    # 1. Force a pending mandatory specialist when required.
+    # 2. Ask the tool-capable model to choose one specialist or finish.
+    # 3. Stop at the worker limit and synthesize the evidence already collected.
     selected_model = state.get("selected_model", GROQ_MODEL)
     supervisor_turns = state.get("supervisor_turns", 0) + 1
     pending_task = _pending_required_specialist(state)
@@ -393,6 +457,8 @@ def supervisor_node(state: AutonomousState) -> dict:
     }
 
 
+# Function: worker_node
+# Purpose: Run the supervisor-selected specialist and append its sanitized findings.
 def worker_node(state: AutonomousState) -> dict:
     """Run the supervisor-selected specialist and append its sanitized findings."""
     selected_model = state.get("selected_model", OLLAMA_MODEL)
@@ -415,6 +481,8 @@ def worker_node(state: AutonomousState) -> dict:
     }
 
 
+# Function: _parse_critique
+# Purpose: Read the critic's JSON decision; malformed output requests a bounded retry.
 def _parse_critique(content: str) -> tuple[bool, str]:
     """Read the critic's JSON decision; malformed output requests a bounded retry."""
     match = re.search(r"\{.*\}", content, re.DOTALL)
@@ -430,6 +498,8 @@ def _parse_critique(content: str) -> tuple[bool, str]:
     return False, "Critic response was not valid JSON; gather or clarify evidence before finalizing."
 
 
+# Function: critic_node
+# Purpose: Assess whether all specialist findings collectively answer the user goal.
 def critic_node(state: AutonomousState) -> dict:
     """Assess whether all specialist findings collectively answer the user goal."""
     findings = state.get("worker_results", [])
@@ -471,6 +541,10 @@ def critic_node(state: AutonomousState) -> dict:
     return {"is_complete": complete, "critique": feedback}
 
 
+# Function: finalize_node
+# Purpose: Synthesize specialist findings into one response, or use a direct answer. The synthesis prompt
+# treats tool output as untrusted evidence and asks the model to distinguish missing facts from
+# verified findings.
 def finalize_node(state: AutonomousState) -> dict:
     """Synthesize specialist findings into one response, or use a direct answer.
 
@@ -509,11 +583,15 @@ def finalize_node(state: AutonomousState) -> dict:
     return {"messages": [AIMessage(content=f"[AUTONOMOUS] {answer.strip()}")]}
 
 
+# Function: route_after_supervisor
+# Purpose: Dispatch one supervisor decision to a worker or the final synthesis node.
 def route_after_supervisor(state: AutonomousState) -> str:
     """Dispatch one supervisor decision to a worker or the final synthesis node."""
     return "finalize" if state.get("next_agent") == "finish_task" else "worker"
 
 
+# Function: route_after_critic
+# Purpose: Continue delegation only when the critic finds a gap and budget remains.
 def route_after_critic(state: AutonomousState) -> str:
     """Continue delegation only when the critic finds a gap and budget remains."""
     if state.get("rounds", 0) >= MAX_WORKER_ROUNDS:
@@ -557,6 +635,8 @@ autonomous_workflow.add_edge("finalize", "guardrail")
 autonomous_workflow.add_edge("guardrail", END)
 
 
+# Function: _compile_with_checkpointer
+# Purpose: Compile the autonomous graph with its own persistent checkpoint database.
 def _compile_with_checkpointer():
     """Compile the autonomous graph with its own persistent checkpoint database."""
     connection = sqlite3.connect(AUTONOMOUS_DB_PATH, check_same_thread=False)
@@ -568,6 +648,8 @@ def _compile_with_checkpointer():
 autonomous_app_graph = _compile_with_checkpointer()
 
 
+# Function: stream_autonomous_graph
+# Purpose: Stream autonomous workflow updates using a connection owned by this execution.
 def stream_autonomous_graph(state, config, stream_mode="updates"):
     """Stream autonomous workflow updates using a connection owned by this execution."""
     with workflow_span(state, config, "autonomous"):
@@ -581,6 +663,8 @@ def stream_autonomous_graph(state, config, stream_mode="updates"):
                 yield event
 
 
+# Function: invoke_autonomous_graph
+# Purpose: Run the autonomous workflow to completion with an isolated checkpoint connection.
 def invoke_autonomous_graph(state, config):
     """Run the autonomous workflow to completion with an isolated checkpoint connection."""
     with SqliteSaver.from_conn_string(AUTONOMOUS_DB_PATH) as checkpointer:
@@ -589,6 +673,8 @@ def invoke_autonomous_graph(state, config):
         return graph.invoke(state, config=config)
 
 
+# Function: get_latest_autonomous_thread_state
+# Purpose: Read a browser thread's autonomous checkpoint without sharing SQLite connections.
 def get_latest_autonomous_thread_state(thread_id: str):
     """Read a browser thread's autonomous checkpoint without sharing SQLite connections."""
     config = {"configurable": {"thread_id": thread_id}}

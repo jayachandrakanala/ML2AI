@@ -3,9 +3,11 @@ from typing import TypedDict, List, Dict, Any, NotRequired
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langgraph.graph import StateGraph, START, END
 from src.logger import log_status
-from src.mlops import set_run_attribute, site_report_dimensions
+from src.llmops import set_run_attribute, site_report_dimensions
 from src.llm_provider import OLLAMA_MODEL, get_chat_model
 
+# Class: SiteSelectionState
+# Purpose: Data passed through research, evaluation, and report-writing stages.
 class SiteSelectionState(TypedDict):
     """Data passed through research, evaluation, and report-writing stages."""
 
@@ -17,6 +19,10 @@ class SiteSelectionState(TypedDict):
     report_filepath: str
     selected_model: NotRequired[str]
 
+# Function: supervisor_agent_node
+# Purpose: Gather zoning, power, water-supply, and tax research for each site. Each location receives four
+# focused Serper searches; the raw results are grouped by location and returned for the evaluator
+# stage.
 def supervisor_agent_node(state: SiteSelectionState):
     """Gather zoning, power, water-supply, and tax research for each site.
 
@@ -33,7 +39,6 @@ def supervisor_agent_node(state: SiteSelectionState):
     for loc in locations:
         log_status(
             f"🔍 Delegating workers for location: {loc} "
-            "(Zoning, Power, Water, Financials)..."
         )
         
         zoning_res = serper.run(f"commercial real estate zoning environmental regulations data center {loc} {country}")
@@ -53,6 +58,9 @@ def supervisor_agent_node(state: SiteSelectionState):
         
     return {"raw_data": raw_data}
 
+# Function: evaluation_subgraph_node
+# Purpose: Ask the local model to score each site's gathered evidence. The node formats each site's search
+# results into an assessment prompt and stores the model's pros, cons, and metric scores by location.
 def evaluation_subgraph_node(state: SiteSelectionState):
     """Ask the local model to score each site's gathered evidence.
 
@@ -63,7 +71,6 @@ def evaluation_subgraph_node(state: SiteSelectionState):
     evaluations = {}
     
     for loc, data in raw_data.items():
-        log_status(f"📊 Analyzing & scoring infrastructure metrics for {loc}...")
         prompt = f"""
         You are an expert Commercial Real Estate and Data Center Infrastructure Analyst.
         Analyze the following raw data for location: {loc} in {state['country']}.
@@ -95,6 +102,10 @@ def evaluation_subgraph_node(state: SiteSelectionState):
         
     return {"evaluations": evaluations}
 
+# Function: synthesis_and_report_node
+# Purpose: Compare the per-site evaluations and persist the final investment report. The model synthesizes all
+# evaluations into a single report, which is saved under a filename derived from sanitized country and
+# location names.
 def synthesis_and_report_node(state: SiteSelectionState):
     """Compare the per-site evaluations and persist the final investment report.
 
@@ -105,7 +116,6 @@ def synthesis_and_report_node(state: SiteSelectionState):
     locations = state["locations"]
     evaluations = state["evaluations"]
     
-    log_status(f"📝 Synthesizing cross-domain evaluations & drafting Investment Memo...")
     eval_text = "\n\n".join([f"=== LOCATION: {loc} ===\n{eval}" for loc, eval in evaluations.items()])
     
     synthesis_prompt = f"""

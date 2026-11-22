@@ -13,7 +13,7 @@ from src.metrics_logger import (
     log_execution,
     log_workflow_failure,
 )
-from src.mlops import (
+from src.llmops import (
     rag_answer_context_overlap,
     set_run_attribute,
     site_report_dimensions,
@@ -25,13 +25,13 @@ import src.metrics_logger as metrics_logger
 def test_golden_set_passes_configured_offline_regression_gates():
     result = evaluate_golden_cases()
 
-    assert len(load_golden_cases()) == 20
+    assert len(load_golden_cases()) == 22
     assert result["passed"], result
     assert result["sample_counts"] == {
-        "intent": 20,
-        "bm25_source": 8,
+        "intent": 22,
+        "bm25_source": 10,
         "site_region": 6,
-        "crag_route": 8,
+        "crag_route": 10,
     }
 
 

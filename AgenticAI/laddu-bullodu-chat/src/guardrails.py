@@ -11,6 +11,12 @@ except Exception as e:
     PRESIDIO_AVAILABLE = False
 
 
+# Function: sanitize_text
+# Purpose: Redact selected contact details and numeric IDs before text leaves the app. Person names are
+# deliberately excluded from Presidio detection to avoid redacting public figures. Empty input passes
+# through unchanged; regex rules still run after Presidio so 5-8 digit IDs, email addresses, and phone
+# numbers are covered even when the NLP analyzer is unavailable. Presidio detection is limited to
+# email, phone, SSN, and credit-card entities.
 def sanitize_text(text: str) -> str:
     """Redact selected contact details and numeric IDs before text leaves the app.
 

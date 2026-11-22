@@ -172,6 +172,8 @@ def test_intent_routing_classification(scenario):
         ),
         ("How does autonomous multi-agent mode route and review work?", "RAG"),
         ("What is the weather in Dubai today?", "WEB"),
+        ("What documents are available in the local document index?", "RAG"),
+        ("Summarize RAG and Vector Database.pdf", "RAG"),
     ],
 )
 def test_intent_routing_avoids_supply_chain_for_weather_and_workflow_questions(

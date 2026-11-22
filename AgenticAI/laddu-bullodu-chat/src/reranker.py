@@ -6,7 +6,9 @@ from src.logger import log_status
 
 _model_lock = threading.Lock()
 
-# Load cached CrossEncoder model to avoid reloading weights on every graph invocation
+# Function: _cached_load_reranker_model
+# Purpose: Load the CPU-backed BGE cross-encoder once per Streamlit resource cache. A module lock prevents
+# concurrent first-load attempts from initializing the same model weights simultaneously.
 @st.cache_resource
 def _cached_load_reranker_model():
     """Load the CPU-backed BGE cross-encoder once per Streamlit resource cache.
@@ -20,12 +22,18 @@ def _cached_load_reranker_model():
         return CrossEncoder("BAAI/bge-reranker-large", device="cpu")
 
 
+# Function: load_reranker_model
+# Purpose: Report preparation outside Streamlit's cache, then return the cached model.
 def load_reranker_model():
     """Report preparation outside Streamlit's cache, then return the cached model."""
-    log_status("Preparing open-source BAAI bge-reranker-large model...")
     return _cached_load_reranker_model()
 
 
+# Function: rerank_documents
+# Purpose: Score query/document pairs and return the highest-ranked chunks and top score. Scores are the
+# cross-encoder's raw predictions, not calibrated probabilities; the graph uses the maximum score for
+# its configured CRAG threshold. Empty input returns no documents and a zero score without loading the
+# model.
 def rerank_documents(query: str, documents: list, top_k: int = 3):
     """Score query/document pairs and return the highest-ranked chunks and top score.
 
@@ -37,7 +45,6 @@ def rerank_documents(query: str, documents: list, top_k: int = 3):
         return [], 0.0
 
     model = load_reranker_model()
-    log_status(f"Re-ranking {len(documents)} retrieved documents against query...")
 
     # Prepare query-document pairs for the Cross-Encoder
     pairs = [[query, doc.page_content] for doc in documents]

@@ -593,6 +593,7 @@ st.markdown(
 )
 
 
+# Render a workflow-specific live diagram from streamed LangGraph node updates.
 def render_execution_flow(
     workflow_mode: str,
     completed_nodes: set[str],
@@ -707,6 +708,7 @@ def render_execution_flow(
     """
 
 
+# Render the autonomous model/action/observation loop and its live specialist.
 def render_autonomous_agent_flow(
     completed_nodes: set[str],
     active_node: str,
@@ -723,6 +725,7 @@ def render_autonomous_agent_flow(
     )
     selected_tool = f"delegate_to_{active_worker.lower().replace(' ', '_')}"
 
+    # Implement the node_state function used by this application workflow.
     def node_state(node_name: str) -> str:
         if run_state == "complete":
             return "done"
@@ -732,6 +735,7 @@ def render_autonomous_agent_flow(
             return "active"
         return "done" if node_name in completed_nodes else ""
 
+    # Implement the card function used by this application workflow.
     def card(
         x: int,
         y: int,
@@ -859,6 +863,7 @@ def render_autonomous_agent_flow(
     """
 
 
+# Update the live diagram from either a graph node or an in-node status message.
 def update_execution_progress(
     progress: dict[str, str],
     message: str,
@@ -966,6 +971,9 @@ with st.sidebar:
 # ------------------------------------------------------------------------------
 # 1. Thread Persistence & Session Setup
 # ------------------------------------------------------------------------------
+# Each browser session receives a unique thread ID. The workflow suffix keeps
+# default and autonomous checkpoints separate, even if both modes use the same
+# browser session. Model and prompt metadata are attached to each run.
 if "thread_id" not in st.session_state:
     # Browser tabs have independent Streamlit session state; never share the default checkpoint.
     st.session_state.thread_id = f"browser-{uuid.uuid4().hex}"
@@ -991,6 +999,7 @@ thread_config = {
 }
 
 
+# Persist a PII-redacted failure candidate with the current run lineage.
 def record_workflow_failure(
     error: Exception, query: str, failed_node: str, intent: str
 ) -> None:
@@ -1013,6 +1022,7 @@ def record_workflow_failure(
     )
 
 
+# Return the most recent user message from the Streamlit session.
 def latest_user_query() -> str:
     """Return the most recent user message from the Streamlit session."""
     for message in reversed(st.session_state.messages):
@@ -1109,6 +1119,9 @@ for message in st.session_state.messages:
 # ------------------------------------------------------------------------------
 # 2. Checkpoint Auto-Resumption Logic on Startup
 # ------------------------------------------------------------------------------
+# LangGraph writes the next node to SQLite before a run ends. If an interrupted
+# run has pending nodes, the UI streams them from the checkpoint instead of
+# starting a duplicate assistant turn.
 current_checkpoint = get_latest_thread_state(thread_config["configurable"]["thread_id"])
 
 if current_checkpoint and current_checkpoint.next:
@@ -1135,6 +1148,7 @@ if current_checkpoint and current_checkpoint.next:
             )
         )
         with st.status("Resuming agentic workflow from checkpoint...", expanded=True) as status:
+            # Show a checkpoint-resumption update in the active Streamlit status panel.
             def update_status(msg: str):
                 """Show a checkpoint-resumption update in the active Streamlit status panel."""
                 update_execution_progress(
@@ -1225,6 +1239,8 @@ else:
 # ------------------------------------------------------------------------------
 # 3. Handle New User Input
 # ------------------------------------------------------------------------------
+# Convert the most recent user turn into LangGraph messages, limit conversation
+# history to the latest eight entries, and stream new graph events back to UI.
 prompt = st.chat_input(
     "Ask about your documents, research, or site selection...",
     key="chat_prompt_input",
@@ -1267,6 +1283,7 @@ if prompt:
             else "Initializing agentic workflow...",
             expanded=True,
         ) as status:
+            # Render graph-node progress in the active Streamlit status panel.
             def update_status(msg: str):
                 """Render graph-node progress in the active Streamlit status panel."""
                 update_execution_progress(

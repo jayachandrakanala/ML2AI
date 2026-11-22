@@ -148,6 +148,16 @@ def test_required_specialists_cover_features_and_dubai_water_supply():
     assert "Do not invent capabilities" in tasks[1][1]
 
 
+def test_required_specialists_cover_document_index_queries():
+    """Send document-catalog questions to the direct project-document worker."""
+    tasks = autonomous._required_specialist_tasks(
+        "What documents are available in the local document index?"
+    )
+
+    assert [agent for agent, _ in tasks] == ["delegate_to_project_docs"]
+    assert "local document index" in tasks[0][1]
+
+
 def test_supervisor_forces_project_docs_specialist(monkeypatch):
     """Do not use low-relevance RAG/web search for the project's own workflow."""
     monkeypatch.setattr(
@@ -284,6 +294,7 @@ def test_project_docs_worker_returns_relevant_checked_in_documents():
 
     assert "Streamlit chat interface" in result
     assert "voice interaction or image generation" in result
+    assert "Laddu Bullodu Document Index" in result
     assert "four specialist executions" in result
     assert "critic" in result
     assert "supervisor" in result

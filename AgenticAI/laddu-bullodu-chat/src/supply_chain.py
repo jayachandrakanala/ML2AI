@@ -20,6 +20,8 @@ neo4j_graph = Neo4jGraph(
     refresh_schema=False
 )
 
+# Class: SupplyChainState
+# Purpose: State contract for Cypher generation, graph analytics, and mitigation synthesis.
 class SupplyChainState(TypedDict):
     """State contract for Cypher generation, graph analytics, and mitigation synthesis."""
     query: str
@@ -29,6 +31,11 @@ class SupplyChainState(TypedDict):
     gds_routing_data: List[Dict[str, Any]]
     final_mitigation_memo: str
 
+# Function: text_to_cypher_node
+# Purpose: Generate a schema-constrained Cypher query, execute it, and save graph context. The selected model
+# receives the supported node/relationship schema and examples. Markdown fences are removed before
+# execution; generation errors use a fixed query, and query errors trigger a second fixed graph query.
+# Returns the generated query and serialized records for the synthesis node.
 def text_to_cypher_node(state: SupplyChainState) -> Dict[str, Any]:
     """Generate a schema-constrained Cypher query, execute it, and save graph context.
 
@@ -39,7 +46,6 @@ def text_to_cypher_node(state: SupplyChainState) -> Dict[str, Any]:
     """
     user_query = state["query"]
     selected_model = state.get("selected_model", OLLAMA_MODEL)
-    log_status(f"LLM generating dynamic Cypher query for user prompt: '{user_query}'...")
 
     schema = """
     Nodes & Properties:
@@ -65,7 +71,6 @@ def text_to_cypher_node(state: SupplyChainState) -> Dict[str, Any]:
 
     prompt = f"""You are an expert Cypher database query generator for a supply chain graph database.
 Given the schema and examples below, generate a valid Cypher query to answer the user's question.
-Return ONLY the raw Cypher query inside a markdown code block (e.g., ```cypher ... ```). Do not include any explanations.
 
 Rules:
 1. Always use `toLower(c.name) CONTAINS 'keyword'` when matching components (e.g., 'microcontroller', 'sensor', 'lens').
@@ -138,6 +143,11 @@ User Question: {user_query}
     log_status("Neo4j graph intelligence data retrieved successfully.")
     return {"generated_cypher": cypher, "graph_context": context_str}
 
+# Function: calculate_gds_optimal_route
+# Purpose: Project the supply-chain network and run weighted Neo4j GDS Dijkstra routing. Relationship weight
+# combines transit days with a scaled cost multiplier. The current query evaluates the configured
+# Shenzhen-port-to-US-facility path; GDS failures produce a medium-feasibility intermodal fallback
+# entry.
 def calculate_gds_optimal_route(state: SupplyChainState) -> Dict[str, Any]:
     """Project the supply-chain network and run weighted Neo4j GDS Dijkstra routing.
 
@@ -145,7 +155,6 @@ def calculate_gds_optimal_route(state: SupplyChainState) -> Dict[str, Any]:
     The current query evaluates the configured Shenzhen-port-to-US-facility
     path; GDS failures produce a medium-feasibility intermodal fallback entry.
     """
-    log_status("Running GDS Dijkstra weighted pathfinding on in-memory graph projection...")
     
     gds_routes = []
     try:
@@ -206,6 +215,11 @@ def calculate_gds_optimal_route(state: SupplyChainState) -> Dict[str, Any]:
     return {"gds_routing_data": gds_routes}
 
 
+# Function: llm_reasoning_synthesizer
+# Purpose: Turn retrieved graph records and route analytics into a user-facing mitigation memo. The prompt
+# directs the model to answer from the supplied data, calculate revenue exposure when requested, and
+# format findings as Markdown. If model invocation fails, the node returns a plain context-based
+# summary.
 def llm_reasoning_synthesizer(state: SupplyChainState) -> Dict[str, Any]:
     """Turn retrieved graph records and route analytics into a user-facing mitigation memo.
 
@@ -213,7 +227,6 @@ def llm_reasoning_synthesizer(state: SupplyChainState) -> Dict[str, Any]:
     revenue exposure when requested, and format findings as Markdown. If model
     invocation fails, the node returns a plain context-based summary.
     """
-    log_status("LLM synthesizing tailored response based on retrieved graph intelligence...")
     
     user_query = state["query"]
     selected_model = state.get("selected_model", OLLAMA_MODEL)

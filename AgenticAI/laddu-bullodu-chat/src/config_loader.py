@@ -4,6 +4,10 @@ from pathlib import Path
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "prompts_v1.json"
 
+# Function: load_version_config
+# Purpose: Load prompts and thresholds from ``config/prompts_v1.json`` or use built-in defaults. If the file is
+# absent or cannot be parsed, callers receive the default version, CRAG/retrieval thresholds, and
+# system prompts defined below.
 def load_version_config() -> dict:
     """Load prompts and thresholds from ``config/prompts_v1.json`` or use built-in defaults.
 
