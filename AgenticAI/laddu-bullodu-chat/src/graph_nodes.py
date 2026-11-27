@@ -12,6 +12,12 @@ from langchain_core.messages import AIMessage
 from src.config_loader import load_version_config
 from src.intent_router import route_intent, extract_site_parameters
 from src.hybrid_search import HybridRetriever, reciprocal_rank_fusion
+from src.image_store import (
+    IMAGE_STORE_DIRECTORY,
+    image_assets_for_documents,
+    is_visual_query,
+    index_document_images,
+)
 from src.reranker import rerank_documents
 from src.guardrails import sanitize_text
 from src.logger import log_status
@@ -58,17 +64,17 @@ def estimate_token_cost(model_name: str, text_content: str) -> float:
     return (tokens / 1_000_000) * 0.20   # ~$0.20 per million tokens
 
 # Function: _cached_load_embeddings_and_vector_store
-# Purpose: Load the selected embedding backend and its persistent Chroma collection. Reads ``.txt`` and ``.md``
-# files from ``documents/``, sanitizes PII before indexing, splits content into overlapping
-# 500-character chunks, and stores source metadata. Local and Ollama embeddings use separate
-# collection names.
+# Purpose: Load the selected embedding backend and its persistent Chroma collection. Reads text documents,
+# indexes extracted PDF and standalone images with searchable source context, sanitizes text before indexing,
+# and stores image binaries in a local asset directory. Local and Ollama embeddings use separate collections.
 @st.cache_resource
 def _cached_load_embeddings_and_vector_store(use_local_embeddings: bool = False):
     """Load the selected embedding backend and its persistent Chroma collection.
 
-    Reads ``.txt`` and ``.md`` files from ``documents/``, sanitizes PII before
-    indexing, splits content into overlapping 500-character chunks, and stores
-    source metadata. Local and Ollama embeddings use separate collection names.
+    Reads text documents from ``documents/``, indexes images from PDFs and
+    standalone image files, sanitizes text before indexing, and stores image
+    assets under ``document_images/``. Local and Ollama embeddings use separate
+    collection names.
     """
     # Embedding backend selection:
     # - Cloud chat models use the local Hugging Face/Gemma-compatible path.
@@ -89,31 +95,56 @@ def _cached_load_embeddings_and_vector_store(use_local_embeddings: bool = False)
         persist_directory=PERSIST_DIRECTORY
     )
     
-    # Document ingestion is incremental: existing collection entries are reused,
-    # while changed project documents are sanitized and split into 500-character
-    # chunks before being stored with source and modification metadata.
+    # Text chunks and image descriptions share the same embedding collection.
+    # Image bytes stay in a separate local asset directory; Chroma stores only
+    # their searchable context and stable asset IDs.
     if os.path.exists(DOCS_DIRECTORY):
         all_docs = []
-        for filename in os.listdir(DOCS_DIRECTORY):
-            if filename.endswith((".txt", ".md")):
-                file_path = os.path.join(DOCS_DIRECTORY, filename)
+        for root, directories, filenames in os.walk(DOCS_DIRECTORY):
+            directories.sort()
+            filenames.sort()
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                relative_source = os.path.relpath(file_path, DOCS_DIRECTORY)
+                if not filename.lower().endswith((".txt", ".md")):
+                    continue
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         sanitized_content = sanitize_text(f.read())
-                        doc_id = f"{filename}_{os.path.getmtime(file_path)}"
-                        all_docs.append(Document(page_content=sanitized_content, metadata={"source": filename, "id": doc_id}))
+                        doc_id = f"{relative_source}_{os.path.getmtime(file_path)}"
+                        all_docs.append(
+                            Document(
+                                page_content=sanitized_content,
+                                metadata={"source": relative_source, "id": doc_id},
+                            )
+                        )
                 except Exception:
                     logging.getLogger(__name__).exception(
                         "Error reading document %s", filename
                     )
-        
+
+        image_docs = index_document_images(
+            DOCS_DIRECTORY, IMAGE_STORE_DIRECTORY
+        )
         if all_docs:
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
             split_docs = text_splitter.split_documents(all_docs)
+            all_docs = split_docs
+        else:
+            all_docs = []
+        all_docs.extend(image_docs)
+        if all_docs:
             vector_store.add_texts(
-                texts=[d.page_content for d in split_docs],
-                metadatas=[d.metadata for d in split_docs],
-                ids=[f"{d.metadata['source']}_{i}" for i, d in enumerate(split_docs)]
+                texts=[document.page_content for document in all_docs],
+                metadatas=[document.metadata for document in all_docs],
+                ids=[
+                    (
+                        f"image_{document.metadata['image_asset_id']}"
+                        if document.metadata.get("kind") == "image"
+                        else f"{document.metadata['source']}_{index}"
+                    )
+                    for index, document in enumerate(all_docs)
+                ],
             )
     return vector_store
 
@@ -172,6 +203,7 @@ def router_node(state: dict):
     # human request. The classified intent and start time are written into state
     # so downstream nodes and the guardrail can use them consistently.
     state["start_time"] = time.time()  # Stamped for latency calculation
+    state["retrieved_images"] = []
     latest_query = ""
     for msg in reversed(state["messages"]):
         msg_type = getattr(msg, "type", "")
@@ -207,11 +239,36 @@ def retrieve_node(state: dict):
         use_local_embeddings=selected_model != OLLAMA_MODEL
     )
     
-    dense_docs = vectorstore.similarity_search(latest_query, k=THRESHOLDS.get("top_k_retrieval", 20))
+    top_k_retrieval = THRESHOLDS.get("top_k_retrieval", 20)
+    dense_docs = vectorstore.similarity_search(latest_query, k=top_k_retrieval)
     hybrid_retriever = get_or_init_hybrid_retriever(vectorstore)
-    bm25_docs = hybrid_retriever.bm25_search(latest_query, k=THRESHOLDS.get("top_k_retrieval", 20)) if hybrid_retriever else []
+    bm25_docs = (
+        hybrid_retriever.bm25_search(latest_query, k=top_k_retrieval)
+        if hybrid_retriever
+        else []
+    )
     
-    fused_docs = reciprocal_rank_fusion(dense_docs, bm25_docs, top_k=THRESHOLDS.get("top_k_retrieval", 20))
+    fused_docs = reciprocal_rank_fusion(
+        dense_docs, bm25_docs, top_k=top_k_retrieval
+    )
+    image_docs = []
+    if is_visual_query(latest_query):
+        image_docs = vectorstore.similarity_search(
+            latest_query,
+            k=min(top_k_retrieval, 3),
+            filter={"kind": "image"},
+        )
+        indexed_image_ids = {
+            document.metadata.get("image_asset_id")
+            for document in fused_docs
+            if document.metadata.get("image_asset_id")
+        }
+        fused_docs.extend(
+            document
+            for document in image_docs
+            if document.metadata.get("image_asset_id") not in indexed_image_ids
+        )
+    state["image_docs"] = image_docs
     state["raw_docs"] = fused_docs
     return state
 
@@ -230,7 +287,19 @@ def rerank_node(state: dict):
     latest_query = state["messages"][-1].content
     raw_docs = state.get("raw_docs", [])
     top_docs, top_score = rerank_documents(latest_query, raw_docs, top_k=THRESHOLDS.get("top_k_rerank", 3))
+    image_docs = state.get("image_docs", [])
+    if image_docs:
+        image_doc_ids = {
+            document.metadata.get("image_asset_id") for document in image_docs
+        }
+        top_docs = [
+            document
+            for document in top_docs
+            if document.metadata.get("image_asset_id") not in image_doc_ids
+        ]
+        top_docs.extend(image_docs)
     state["top_docs"] = top_docs
+    state["retrieved_images"] = image_assets_for_documents(top_docs)
     state["top_relevance_score"] = top_score
     set_run_attribute("rag.reranker_score", top_score)
     set_run_attribute("rag.retrieved_context_count", len(top_docs))
@@ -299,6 +368,7 @@ def rag_generate_node(state: dict):
     history before the selected model is invoked.
     """
     top_docs = state.get("top_docs", [])
+    state["retrieved_images"] = image_assets_for_documents(top_docs)
     selected_model = state.get("selected_model", GROQ_MODEL)
     context_text = "\n\n".join([doc.page_content for doc in top_docs])
     
@@ -321,6 +391,7 @@ def crag_fallback_node(state: dict):
     """
     latest_query = state["messages"][-1].content
     selected_model = state.get("selected_model", GROQ_MODEL)
+    state["retrieved_images"] = []
     # A live-search failure is converted into textual context rather than
     # silently returning an empty result. This keeps the model prompt complete
     # and makes the fallback failure visible in the generated response.

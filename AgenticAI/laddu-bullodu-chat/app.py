@@ -39,12 +39,29 @@ warnings.filterwarnings(
 from src.agent_graph import set_status_callback
 from src.config_loader import load_version_config
 from src.llm_provider import GROQ_MODEL, MODEL_LABELS, OLLAMA_MODEL
+from src.image_store import resolve_image_asset
 
 st.set_page_config(
     page_title="Laddu Bullodu RAG Assistant",
     page_icon="🟠",
     layout="wide",
 )
+
+
+def render_retrieved_images(images: list[dict[str, str | int]]):
+    """Display validated local image assets attached to an assistant response."""
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        image_path = resolve_image_asset(
+            str(image.get("asset_id", "")),
+            str(image.get("extension", "")),
+        )
+        if image_path is None:
+            st.warning("A retrieved document image is no longer available.")
+            continue
+        st.image(str(image_path), caption=str(image.get("caption", "Document image")))
+
 
 st.markdown(
     """
@@ -1115,6 +1132,7 @@ if not has_user_messages:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        render_retrieved_images(message.get("images", []))
 
 # ------------------------------------------------------------------------------
 # 2. Checkpoint Auto-Resumption Logic on Startup
@@ -1128,6 +1146,7 @@ if current_checkpoint and current_checkpoint.next:
     st.info("⚡ Detected interrupted workflow execution. Automatically resuming from the selected workflow's SQLite checkpoint...")
     
     ai_response = ""
+    retrieved_images = []
     with st.chat_message("assistant"):
         completed_nodes = set()
         progress = {
@@ -1161,6 +1180,8 @@ if current_checkpoint and current_checkpoint.next:
             try:
                 for event in stream_graph(None, config=thread_config, stream_mode="updates"):
                     for node_name, state_update in event.items():
+                        if state_update.get("retrieved_images") is not None:
+                            retrieved_images = state_update["retrieved_images"]
                         completed_nodes.add(node_name)
                         if state_update.get("intent"):
                             progress["intent"] = state_update["intent"]
@@ -1190,6 +1211,14 @@ if current_checkpoint and current_checkpoint.next:
                             latest_msg = state_update["messages"][-1]
                             ai_response = getattr(latest_msg, "content", str(latest_msg))
 
+                if not retrieved_images:
+                    resumed_checkpoint = get_latest_thread_state(
+                        thread_config["configurable"]["thread_id"]
+                    )
+                    if resumed_checkpoint:
+                        retrieved_images = resumed_checkpoint.values.get(
+                            "retrieved_images", []
+                        )
                 flow_placeholder.html(
                     render_execution_flow(
                         workflow_mode,
@@ -1232,7 +1261,14 @@ if current_checkpoint and current_checkpoint.next:
 
         if ai_response:
             st.markdown(ai_response)
-            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            render_retrieved_images(retrieved_images)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": ai_response,
+                    "images": retrieved_images,
+                }
+            )
 else:
     pass
 
@@ -1259,6 +1295,7 @@ if prompt:
             graph_messages.append(("assistant", msg["content"]))
 
     ai_response = ""
+    retrieved_images = []
     with st.chat_message("assistant"):
         completed_nodes = set()
         progress = {
@@ -1321,6 +1358,8 @@ if prompt:
 
                 for event in stream_graph(state_input, config=thread_config, stream_mode="updates"):
                     for node_name, state_update in event.items():
+                        if state_update.get("retrieved_images") is not None:
+                            retrieved_images = state_update["retrieved_images"]
                         completed_nodes.add(node_name)
                         if state_update.get("intent"):
                             progress["intent"] = state_update["intent"]
@@ -1354,6 +1393,14 @@ if prompt:
                             elif isinstance(latest_msg, dict):
                                 ai_response = latest_msg.get("content", "")
 
+                if not retrieved_images:
+                    final_checkpoint = get_latest_thread_state(
+                        thread_config["configurable"]["thread_id"]
+                    )
+                    if final_checkpoint:
+                        retrieved_images = final_checkpoint.values.get(
+                            "retrieved_images", []
+                        )
                 if not ai_response:
                     final_checkpoint = get_latest_thread_state(
                         thread_config["configurable"]["thread_id"]
@@ -1429,4 +1476,11 @@ if prompt:
                 set_status_callback(None)
 
         st.markdown(ai_response)
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+        render_retrieved_images(retrieved_images)
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": ai_response,
+                "images": retrieved_images,
+            }
+        )

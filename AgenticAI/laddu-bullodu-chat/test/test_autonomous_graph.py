@@ -1,7 +1,9 @@
 import pytest
+from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage
 
 import src.autonomous_graph as autonomous
+import src.agent_graph as agent_graph
 import src.graph_nodes as graph_nodes
 import src.intent_router as intent_router
 import src.logger as logger
@@ -286,6 +288,84 @@ def test_worker_executes_selected_site_selection_specialist(monkeypatch):
     assert result["rounds"] == 1
 
 
+def test_rag_worker_returns_retrieved_image_references(monkeypatch):
+    """Pass retrieved image assets through the autonomous specialist result."""
+    image = {
+        "asset_id": "a" * 64,
+        "extension": "png",
+        "caption": "visualization.pdf, page 2",
+    }
+    monkeypatch.setattr(
+        autonomous,
+        "_run_rag_worker_with_images",
+        lambda query, model: ("[RAG] Image context found.", [image]),
+    )
+
+    result = autonomous.worker_node(
+        {
+            "next_agent": "delegate_to_rag",
+            "worker_query": "Show the visualization image",
+            "selected_model": "test-model",
+            "worker_results": [],
+            "rounds": 0,
+        }
+    )
+
+    assert result["retrieved_images"] == [image]
+
+
+def test_visual_rag_request_uses_local_images_below_crag_threshold(monkeypatch):
+    """Keep local image retrieval even when its text reranker score is low."""
+    image = {
+        "asset_id": "a" * 64,
+        "extension": "png",
+        "caption": "visualization.pdf, page 2",
+    }
+    state = {
+        "messages": [
+            HumanMessage(content="Show the image from the visualization PDF")
+        ],
+        "retrieved_images": [image],
+        "top_relevance_score": 0.02,
+    }
+
+    assert agent_graph.route_after_rerank(state) == "rag_generate_node"
+
+    initialized = autonomous.initialize_autonomous_run(
+        {"messages": [HumanMessage(content="Show the image from the PDF")]}
+    )
+    assert autonomous._pending_required_specialist(
+        {**initialized, "worker_results": []}
+    ) == (
+        "delegate_to_rag",
+        "Search the local document vector store for matching embedded images "
+        "or image files. Return any retrieved image with its document and page "
+        "provenance, and explain when no indexed image matches. Original goal: "
+        "Show the image from the PDF",
+    )
+
+
+def test_crag_fallback_does_not_render_low_relevance_images(monkeypatch):
+    """Hide local images when retrieval confidence sends the answer to web search."""
+    class FakeModel:
+        def invoke(self, messages):
+            return AIMessage(content="Web fallback response")
+
+    fake_search = type("FakeSearch", (), {"run": lambda self, query: "Web evidence"})()
+    monkeypatch.setattr(graph_nodes, "serper_search", fake_search)
+    monkeypatch.setattr(graph_nodes, "get_chat_model", lambda model: FakeModel())
+    state = {
+        "messages": [HumanMessage(content="Show an image from the documents")],
+        "retrieved_images": [
+            {"asset_id": "a" * 64, "extension": "png", "caption": "unrelated.png"}
+        ],
+    }
+
+    result = graph_nodes.crag_fallback_node(state)
+
+    assert result["retrieved_images"] == []
+
+
 def test_project_docs_worker_returns_relevant_checked_in_documents():
     """Provide implemented features and workflow details as direct local evidence."""
     result = autonomous._run_project_docs_worker(
@@ -503,7 +583,7 @@ def test_retrieve_node_selects_embedding_backend(
     embedding_options = []
 
     class FakeVectorStore:
-        def similarity_search(self, query, k):
+        def similarity_search(self, query, k, filter=None):
             return []
 
     def fake_load_embeddings_and_vector_store(use_local_embeddings):
@@ -525,6 +605,43 @@ def test_retrieve_node_selects_embedding_backend(
     )
 
     assert embedding_options == [expected_local_embeddings]
+
+
+def test_visual_rag_query_includes_filtered_image_candidates(monkeypatch):
+    """Search image records explicitly for visual questions before reranking."""
+    image_doc = Document(
+        page_content="Embedding visualization with HR documents",
+        metadata={
+            "kind": "image",
+            "image_asset_id": "a" * 64,
+            "image_extension": "png",
+        },
+    )
+    filters = []
+
+    class FakeVectorStore:
+        def similarity_search(self, query, k, filter=None):
+            filters.append(filter)
+            return [image_doc] if filter else []
+
+    monkeypatch.setattr(
+        graph_nodes,
+        "load_embeddings_and_vector_store",
+        lambda use_local_embeddings: FakeVectorStore(),
+    )
+    monkeypatch.setattr(graph_nodes, "get_or_init_hybrid_retriever", lambda _: None)
+
+    state = graph_nodes.retrieve_node(
+        {
+            "messages": [
+                HumanMessage(content="What color is HR in the embedding visualization?")
+            ],
+            "selected_model": OPENROUTER_FREE_MODEL,
+        }
+    )
+
+    assert filters == [None, {"kind": "image"}]
+    assert image_doc in state["raw_docs"]
 
 
 def test_embedding_cache_reports_progress_outside_cached_loader(

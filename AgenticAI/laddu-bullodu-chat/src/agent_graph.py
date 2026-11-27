@@ -26,6 +26,7 @@ from src.graph_nodes import (
     crag_fallback_node,
     output_guardrail_node
 )
+from src.image_store import is_visual_query
 
 CONFIG = load_version_config()
 THRESHOLDS = CONFIG["thresholds"]
@@ -58,6 +59,8 @@ class State(TypedDict):
     intent: NotRequired[str]
     raw_docs: NotRequired[list]
     top_docs: NotRequired[list]
+    image_docs: NotRequired[list]
+    retrieved_images: NotRequired[list]
     top_relevance_score: NotRequired[float]
     start_time: NotRequired[float]
     thread_id: NotRequired[str]
@@ -78,8 +81,12 @@ def route_after_router(state: State):
 def route_after_rerank(state: State):
     """Choose local RAG generation or web fallback using the configured CRAG score threshold.
 
-    A missing relevance score is treated as zero, which routes to the fallback.
+    Local image candidates satisfy explicit visual requests independently of the
+    text reranker score. Other requests use the configured CRAG threshold.
     """
+    latest_query = state["messages"][-1].content
+    if is_visual_query(latest_query) and state.get("retrieved_images"):
+        return "rag_generate_node"
     return (
         "crag_fallback_node"
         if crag_fallback_required(

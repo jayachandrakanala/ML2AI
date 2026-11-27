@@ -168,7 +168,7 @@ The application supports per-browser chat threads persisted in SQLite and stream
 ![alt text](images/image_agent_flow.png)
 ![alt text](images/image_rag_vectordb.png)
 
-> Add your own documents to `documents/`; application startup indexes supported `.md` and `.txt` files into the local ChromaDB collection.
+> Add documents and images to `documents/`. When the RAG vector store is initialized, it indexes `.md` and `.txt` content, standalone raster images, and embedded raster images in PDFs into the local ChromaDB collection. Extracted image files are stored under the ignored `document_images/` directory; Chroma stores searchable page text, source metadata, and stable image IDs. Retrieved images appear inline in chat. Search uses filenames and nearby PDF text; it does not OCR or visually interpret images. Add a same-name `.md` or `.txt` sidecar next to standalone images to make them easier to find. Vector-only PDF illustrations are not extracted as image assets.
 
 ## 🚀 Technical Highlights
 

@@ -21,6 +21,7 @@ from src.graph_nodes import (
     rerank_node,
     retrieve_node,
 )
+from src.image_store import image_assets_for_documents, is_visual_query
 from src.guardrails import sanitize_text
 from src.llm_provider import GROQ_MODEL, OLLAMA_MODEL, get_chat_model, trim_chat_messages
 from src.logger import log_status
@@ -41,6 +42,7 @@ class AutonomousState(TypedDict):
     thread_id: NotRequired[str]
     goal: NotRequired[str]
     worker_results: NotRequired[list[dict[str, str]]]
+    retrieved_images: NotRequired[list]
     next_agent: NotRequired[str]
     worker_query: NotRequired[str]
     proposed_answer: NotRequired[str]
@@ -59,7 +61,8 @@ class AutonomousState(TypedDict):
 WORKER_DESCRIPTIONS = {
     "delegate_to_rag": (
         "Search internal project documents with hybrid dense/BM25 retrieval and "
-        "cross-encoder ranking. Use for questions likely answered by local documents."
+        "cross-encoder ranking, and return matching document images when available. "
+        "Use for questions likely answered by local documents."
     ),
     "delegate_to_project_docs": (
         "Read the checked-in project feature and workflow documents directly. "
@@ -126,6 +129,36 @@ def _required_specialist_tasks(goal: str) -> list[tuple[str, str]]:
                 "Use the local document index and project documentation to answer "
                 "which checked-in sources are available and summarize only the "
                 "information listed in those sources.",
+            )
+        )
+
+    visual_request = any(
+        term in normalized_goal
+        for term in (
+            "image",
+            "images",
+            "picture",
+            "pictures",
+            "photo",
+            "photos",
+            "diagram",
+            "diagrams",
+            "figure",
+            "figures",
+            "chart",
+            "charts",
+            "visualization",
+            "visualizations",
+        )
+    )
+    if visual_request:
+        tasks.append(
+            (
+                "delegate_to_rag",
+                "Search the local document vector store for matching embedded "
+                "images or image files. Return any retrieved image with its "
+                "document and page provenance, and explain when no indexed "
+                f"image matches. Original goal: {goal}",
             )
         )
 
@@ -215,21 +248,40 @@ def _pending_required_specialist(state: AutonomousState) -> tuple[str, str] | No
 
 # Function: _run_rag_worker
 # Purpose: Run the existing hybrid retrieval, reranking, and CRAG/RAG generation path.
-def _run_rag_worker(query: str, selected_model: str) -> str:
-    """Run the existing hybrid retrieval, reranking, and CRAG/RAG generation path."""
+def _run_rag_worker_with_images(
+    query: str, selected_model: str
+) -> tuple[str, list[dict[str, str | int]]]:
+    """Run RAG and return both the specialist's text and its retrieved images."""
     state = {
         "messages": [HumanMessage(content=query)],
         "selected_model": selected_model,
     }
     retrieve_node(state)
     rerank_node(state)
-    if state.get("top_relevance_score", 0.0) < THRESHOLDS.get(
+    if (
+        not (
+            is_visual_query(query)
+            and state.get("retrieved_images")
+        )
+        and state.get("top_relevance_score", 0.0) < THRESHOLDS.get(
         "crag_relevance_threshold", 0.4
+        )
     ):
         crag_fallback_node(state)
     else:
         rag_generate_node(state)
-    return str(state["messages"][-1].content)
+    return (
+        str(state["messages"][-1].content),
+        state.get(
+            "retrieved_images",
+            image_assets_for_documents(state.get("top_docs", [])),
+        ),
+    )
+
+
+def _run_rag_worker(query: str, selected_model: str) -> str:
+    """Run the existing hybrid retrieval, reranking, and CRAG/RAG generation path."""
+    return _run_rag_worker_with_images(query, selected_model)[0]
 
 
 # Function: _run_project_docs_worker
@@ -344,6 +396,7 @@ def initialize_autonomous_run(state: AutonomousState) -> dict:
     return {
         "goal": _latest_user_query(state["messages"]),
         "worker_results": [],
+        "retrieved_images": [],
         "rounds": 0,
         "supervisor_turns": 0,
         "critique": "",
@@ -469,7 +522,11 @@ def worker_node(state: AutonomousState) -> dict:
         raise RuntimeError(f"Cannot execute unsupported autonomous worker: {worker_name!r}")
 
     log_status(f"Autonomous supervisor delegated to {worker_name}.")
-    result = tool_map[worker_name].invoke({"query": query})
+    retrieved_images = state.get("retrieved_images", [])
+    if worker_name == "delegate_to_rag":
+        result, retrieved_images = _run_rag_worker_with_images(query, selected_model)
+    else:
+        result = tool_map[worker_name].invoke({"query": query})
     safe_result = sanitize_text(str(result))
     worker_results = list(state.get("worker_results", []))
     worker_results.append(
@@ -478,6 +535,7 @@ def worker_node(state: AutonomousState) -> dict:
     return {
         "worker_results": worker_results,
         "rounds": state.get("rounds", 0) + 1,
+        "retrieved_images": retrieved_images,
     }
 
 

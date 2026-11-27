@@ -174,6 +174,8 @@ def test_intent_routing_classification(scenario):
         ("What is the weather in Dubai today?", "WEB"),
         ("What documents are available in the local document index?", "RAG"),
         ("Summarize RAG and Vector Database.pdf", "RAG"),
+        ("Show the image from the embedding space visualization PDF", "RAG"),
+        ("Find images in the project documents about vector databases", "RAG"),
     ],
 )
 def test_intent_routing_avoids_supply_chain_for_weather_and_workflow_questions(

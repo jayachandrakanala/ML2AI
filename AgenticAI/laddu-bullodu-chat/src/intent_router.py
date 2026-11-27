@@ -82,6 +82,11 @@ def route_intent(query: str) -> str:
         "crew ai", "gen ai interview", "llms", "lamaindex", "llamaindex",
         "model context protocol", "multi agent", "n8n", "rag interview",
         "rag project structure", "rag and vector", "rag.pdf",
+        "show image from", "show images from", "image from", "images from",
+        "picture in", "photo from", "retrieve image", "retrieve images",
+        "find image in", "find images in", "image in the document",
+        "image in the pdf", "diagram in", "diagram from", "figure in",
+        "figure from", "chart in", "chart from", "picture from",
     ]
     if any(keyword in query_lower for keyword in local_keywords):
         return "RAG"
